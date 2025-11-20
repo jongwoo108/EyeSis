@@ -101,37 +101,110 @@ def estimate_mask_from_similarity(similarity: float) -> float:
     else:
         return 0.0  # 마스크 아님
 
-def get_adjusted_threshold(base_threshold: float, mask_probability: float, similarity: float) -> float:
+def estimate_face_quality(face_bbox: Tuple[int, int, int, int], img_shape: Tuple[int, int]) -> str:
     """
-    마스크 착용 가능성과 유사도에 따라 적응형 임계값 계산
+    얼굴 크기와 이미지 크기를 기반으로 화질 추정
+    
+    얼굴이 크고 이미지 대비 비율이 높으면 화질이 좋다고 판단합니다.
+    
+    Args:
+        face_bbox: (x1, y1, x2, y2) 얼굴 bounding box
+        img_shape: (height, width) 이미지 크기
+    
+    Returns:
+        화질 등급: "high", "medium", "low"
+    """
+    x1, y1, x2, y2 = face_bbox
+    face_width = x2 - x1
+    face_height = y2 - y1
+    face_area = face_width * face_height
+    
+    img_height, img_width = img_shape
+    img_area = img_width * img_height
+    
+    # 얼굴이 이미지에서 차지하는 비율
+    face_ratio = face_area / img_area if img_area > 0 else 0.0
+    
+    # 얼굴 크기 기준 (픽셀 단위)
+    face_size = max(face_width, face_height)
+    
+    # 화질 판단 기준
+    # 1. 얼굴 크기가 150픽셀 이상이고 비율이 0.05 이상 → 고화질
+    # 2. 얼굴 크기가 100픽셀 이상이고 비율이 0.02 이상 → 중화질
+    # 3. 그 외 → 저화질
+    
+    if face_size >= 150 and face_ratio >= 0.05:
+        return "high"
+    elif face_size >= 100 and face_ratio >= 0.02:
+        return "medium"
+    else:
+        return "low"
+
+
+def get_quality_adjusted_threshold(base_threshold: float, quality: str) -> float:
+    """
+    화질에 따라 기본 임계값 조정
+    
+    화질이 좋으면 더 높은 임계값을 사용하여 오탐을 줄이고,
+    화질이 낮으면 낮은 임계값을 사용하여 인식률을 유지합니다.
+    
+    Args:
+        base_threshold: 기본 임계값 (예: 0.32)
+        quality: 화질 등급 ("high", "medium", "low")
+    
+    Returns:
+        화질에 따라 조정된 임계값
+    """
+    if quality == "high":
+        # 고화질: 임계값 상향 (오탐 방지)
+        return base_threshold + 0.03  # 0.32 → 0.35
+    elif quality == "medium":
+        # 중화질: 기본 임계값 유지
+        return base_threshold  # 0.32
+    else:  # low
+        # 저화질: 임계값 하향 (인식률 유지)
+        return max(base_threshold - 0.02, 0.28)  # 0.32 → 0.30 (최소 0.28)
+
+
+def get_adjusted_threshold(base_threshold: float, mask_probability: float, similarity: float, 
+                           face_quality: str = "medium") -> float:
+    """
+    마스크 착용 가능성, 유사도, 화질에 따라 적응형 임계값 계산
     
     마스크를 쓴 얼굴은 유사도가 낮게 나오므로, 마스크 가능성이 높을 때
     더 낮은 임계값을 적용하여 인식 성능을 향상시킵니다.
+    화질이 좋으면 더 높은 임계값을 사용하여 오탐을 줄입니다.
     
     Args:
-        base_threshold: 기본 임계값 (예: 0.30)
+        base_threshold: 기본 임계값 (예: 0.32)
         mask_probability: 마스크 착용 가능성 (0.0 ~ 1.0)
         similarity: 현재 최고 유사도
+        face_quality: 화질 등급 ("high", "medium", "low")
     
     Returns:
         조정된 임계값
     """
+    # 먼저 화질에 따라 기본 임계값 조정
+    quality_adjusted = get_quality_adjusted_threshold(base_threshold, face_quality)
+    
     if mask_probability < 0.3:
-        # 마스크 가능성이 낮으면 기본 임계값 사용
-        return base_threshold
+        # 마스크 가능성이 낮으면 화질 조정된 임계값 사용
+        return quality_adjusted
     
     # 마스크 가능성이 높으면 더 낮은 임계값 적용 (인식률 개선을 위해 조정)
     # 유사도가 0.25~0.30 사이일 때 마스크로 판단하고 0.24~0.28 임계값 사용
     if similarity < 0.28:
         # 매우 낮은 유사도 → 마스크 가능성 매우 높음 → 임계값 낮춤
-        adjusted_threshold = base_threshold - 0.06  # 0.30 → 0.24
+        adjusted_threshold = quality_adjusted - 0.06
     elif similarity < 0.32:
         # 낮은 유사도 → 마스크 가능성 높음 → 임계값 낮춤
-        adjusted_threshold = base_threshold - 0.04  # 0.30 → 0.26
+        adjusted_threshold = quality_adjusted - 0.04
     else:
         # 중간 유사도 → 마스크 가능성 중간 → 약간 낮춤
-        adjusted_threshold = base_threshold - 0.02  # 0.30 → 0.28
+        adjusted_threshold = quality_adjusted - 0.02
     
-    # 최소값 보장 (너무 낮으면 오탐 증가, 최소 0.22로 설정)
-    return max(adjusted_threshold, 0.22)
+    # 최소값 보장 (너무 낮으면 오탐 증가)
+    # 고화질일 때는 최소 0.28, 중화질/저화질일 때는 최소 0.22
+    min_threshold = 0.28 if face_quality == "high" else 0.22
+    return max(adjusted_threshold, min_threshold)
 

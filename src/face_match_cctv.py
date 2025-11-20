@@ -22,10 +22,11 @@ import numpy as np
 from pathlib import Path
 import csv
 import time
+from datetime import datetime
 from collections import defaultdict
 from utils.gallery_loader import load_gallery, match_with_bank, match_with_bank_detailed
 from utils.device_config import get_device_id, safe_prepare_insightface
-from utils.mask_detector import estimate_mask_from_similarity, get_adjusted_threshold
+from utils.mask_detector import estimate_mask_from_similarity, get_adjusted_threshold, estimate_face_quality
 from utils.face_angle_detector import estimate_face_angle
 
 
@@ -35,6 +36,97 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
     if norm == 0:
         return vec
     return vec / norm
+
+
+def calculate_bbox_iou(bbox1, bbox2):
+    """
+    두 bbox 간의 IoU(Intersection over Union) 계산
+    
+    Args:
+        bbox1, bbox2: [x1, y1, x2, y2] 형식의 바운딩 박스
+    
+    Returns:
+        IoU 값 (0.0 ~ 1.0)
+    """
+    x1_1, y1_1, x2_1, y2_1 = bbox1
+    x1_2, y1_2, x2_2, y2_2 = bbox2
+    
+    # 교집합 영역 계산
+    x1_inter = max(x1_1, x1_2)
+    y1_inter = max(y1_1, y1_2)
+    x2_inter = min(x2_1, x2_2)
+    y2_inter = min(y2_1, y2_2)
+    
+    if x2_inter <= x1_inter or y2_inter <= y1_inter:
+        return 0.0
+    
+    inter_area = (x2_inter - x1_inter) * (y2_inter - y1_inter)
+    
+    # 각 bbox의 면적
+    area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+    area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+    union_area = area1 + area2 - inter_area
+    
+    if union_area == 0:
+        return 0.0
+    
+    return inter_area / union_area
+
+
+def calculate_bbox_center_distance(bbox1, bbox2):
+    """
+    두 bbox의 중심점 간 거리 계산
+    
+    Args:
+        bbox1, bbox2: [x1, y1, x2, y2] 형식의 바운딩 박스
+    
+    Returns:
+        중심점 간 유클리드 거리
+    """
+    x1_1, y1_1, x2_1, y2_1 = bbox1
+    x1_2, y1_2, x2_2, y2_2 = bbox2
+    
+    center1_x = (x1_1 + x2_1) / 2
+    center1_y = (y1_1 + y2_1) / 2
+    center2_x = (x1_2 + x2_2) / 2
+    center2_y = (y1_2 + y2_2) / 2
+    
+    distance = np.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
+    return distance
+
+
+def is_same_face_region(bbox1, bbox2, iou_threshold=0.3, distance_threshold=None):
+    """
+    두 bbox가 같은 얼굴 영역을 가리키는지 판단
+    
+    Args:
+        bbox1, bbox2: [x1, y1, x2, y2] 형식의 바운딩 박스
+        iou_threshold: IoU 임계값 (기본 0.3)
+        distance_threshold: 중심점 거리 임계값 (None이면 bbox 크기 기반 자동 계산)
+    
+    Returns:
+        같은 얼굴 영역이면 True, 아니면 False
+    """
+    # IoU 기반 판단
+    iou = calculate_bbox_iou(bbox1, bbox2)
+    if iou >= iou_threshold:
+        return True
+    
+    # 중심점 거리 기반 판단 (보조)
+    if distance_threshold is None:
+        # bbox 크기의 평균을 기준으로 임계값 설정
+        w1 = bbox1[2] - bbox1[0]
+        h1 = bbox1[3] - bbox1[1]
+        w2 = bbox2[2] - bbox2[0]
+        h2 = bbox2[3] - bbox2[1]
+        avg_size = (w1 + h1 + w2 + h2) / 4
+        distance_threshold = avg_size * 0.5  # bbox 크기의 50% 이내면 같은 얼굴로 간주
+    
+    distance = calculate_bbox_center_distance(bbox1, bbox2)
+    if distance <= distance_threshold:
+        return True
+    
+    return False
 
 
 def process_frame(img, app, gallery, BASE_THRESH, frame_idx=None):
@@ -73,9 +165,13 @@ def process_frame(img, app, gallery, BASE_THRESH, frame_idx=None):
         sim_gap = best_sim - second_sim if second_sim > -1 else best_sim
         min_gap = 0.05  # 최소 차이 (5% 이상 차이 필요)
         
-        # 마스크 가능성 추정 및 적응형 임계값
+        # 화질 추정 (얼굴 크기 기반)
+        img_height, img_width = img.shape[:2]
+        face_quality = estimate_face_quality(face.bbox, (img_height, img_width))
+        
+        # 마스크 가능성 추정 및 적응형 임계값 (화질 고려)
         mask_prob = estimate_mask_from_similarity(best_sim)
-        use_thresh = get_adjusted_threshold(BASE_THRESH, mask_prob, best_sim)
+        use_thresh = get_adjusted_threshold(BASE_THRESH, mask_prob, best_sim, face_quality)
         
         # 매칭 여부: 임계값 통과 + 유사도 차이가 충분해야 함
         is_match = (best_sim >= use_thresh) and (sim_gap >= min_gap)
@@ -94,10 +190,11 @@ def process_frame(img, app, gallery, BASE_THRESH, frame_idx=None):
             "is_match": is_match,
             "bbox": face.bbox,
             "mask_prob": mask_prob,
+            "face_quality": face_quality,  # 화질 정보
             "embedding": face_emb_normalized  # 중복 체크용
         })
     
-    # 같은 프레임 내에서 같은 사람이 여러 번 감지된 경우 필터링
+    # 같은 프레임 내에서 매칭 필터링 (bbox 기반 다중 매칭 처리)
     if len(results) > 1:
         matched_results = []
         unmatched_results = []
@@ -109,41 +206,107 @@ def process_frame(img, app, gallery, BASE_THRESH, frame_idx=None):
                 unmatched_results.append(r)
         
         if len(matched_results) > 1:
-            # 같은 사람으로 인식된 얼굴들 그룹화
-            person_groups = {}
-            for r in matched_results:
-                person_id = r["best_id"]
-                if person_id not in person_groups:
-                    person_groups[person_id] = []
-                person_groups[person_id].append(r)
+            # bbox 기반으로 같은 얼굴 영역 그룹화
+            face_groups = []
+            used_indices = set()
             
-            # 각 그룹에서 실제로 같은 사람인지 임베딩 비교
+            for i, r1 in enumerate(matched_results):
+                if i in used_indices:
+                    continue
+                
+                # 새로운 그룹 시작
+                group = [r1]
+                used_indices.add(i)
+                
+                # 같은 얼굴 영역인 다른 매칭 찾기
+                for j, r2 in enumerate(matched_results):
+                    if j <= i or j in used_indices:
+                        continue
+                    
+                    if is_same_face_region(r1["bbox"], r2["bbox"]):
+                        group.append(r2)
+                        used_indices.add(j)
+                
+                face_groups.append(group)
+            
+            # 각 그룹 처리
             filtered_matched = []
-            for person_id, group in person_groups.items():
+            review_candidates = []  # 검토 대상
+            
+            for group in face_groups:
                 if len(group) == 1:
+                    # 단일 매칭: 그대로 유지
                     filtered_matched.append(group[0])
                 else:
-                    # 여러 명이면 임베딩 간 유사도 비교
-                    same_person_threshold = 0.85
-                    
-                    # 가장 유사도가 높은 얼굴을 기준으로 선택
+                    # 같은 얼굴 영역에서 여러 인물로 매칭됨 → 오탐 가능성
+                    # 유사도 순으로 정렬
                     group.sort(key=lambda x: x["similarity"], reverse=True)
-                    best_face = group[0]
-                    filtered_matched.append(best_face)
                     
-                    # 나머지 얼굴들과 임베딩 비교
-                    for other_face in group[1:]:
-                        emb_sim = float(np.dot(best_face["embedding"], other_face["embedding"]))
-                        if emb_sim < same_person_threshold:
-                            # 다른 사람으로 판단 → 매칭 해제 (오탐 가능성)
-                            other_face["is_match"] = False
-                            unmatched_results.append(other_face)
+                    best_match = group[0]
+                    second_match = group[1] if len(group) > 1 else None
+                    
+                    # sim_gap이 충분히 크면 가장 높은 유사도만 인정
+                    min_gap_for_confidence = 0.10  # 10% 이상 차이 필요
+                    if second_match and (best_match["sim_gap"] >= min_gap_for_confidence):
+                        # 확신 있는 매칭
+                        filtered_matched.append(best_match)
+                        # 나머지는 검토 대상
+                        for other in group[1:]:
+                            other["is_match"] = False
+                            other["review_reason"] = "same_face_multiple_persons"
+                            review_candidates.append(other)
+                            unmatched_results.append(other)
+                    else:
+                        # sim_gap이 작아서 애매한 경우 → 모두 검토 대상
+                        for match in group:
+                            match["is_match"] = False
+                            match["review_reason"] = "ambiguous_match"
+                            review_candidates.append(match)
+                            unmatched_results.append(match)
+            
+            # 다른 얼굴 영역의 매칭들도 검토
+            # 낮은 유사도나 작은 sim_gap인 경우 검토 대상으로 분리
+            # 화질에 따라 임계값 조정
+            for match in filtered_matched:
+                quality = match.get("face_quality", "medium")
+                # 고화질일 때는 더 엄격하게, 저화질일 때는 관대하게
+                sim_threshold = 0.38 if quality == "high" else (0.35 if quality == "medium" else 0.32)
+                gap_threshold = 0.10 if quality == "high" else (0.08 if quality == "medium" else 0.06)
+                
+                if match["similarity"] < sim_threshold or match["sim_gap"] < gap_threshold:
+                    match["review_reason"] = "low_confidence"
+                    review_candidates.append(match)
             
             results = filtered_matched + unmatched_results
+            
+            # review_reason이 있는 결과에 플래그 추가
+            for r in results:
+                if "review_reason" not in r:
+                    r["review_reason"] = None
         elif len(matched_results) == 1:
+            # 단일 매칭도 낮은 신뢰도면 검토 대상
+            match = matched_results[0]
+            quality = match.get("face_quality", "medium")
+            # 화질에 따라 임계값 조정
+            sim_threshold = 0.38 if quality == "high" else (0.35 if quality == "medium" else 0.32)
+            gap_threshold = 0.10 if quality == "high" else (0.08 if quality == "medium" else 0.06)
+            
+            if match["similarity"] < sim_threshold or match["sim_gap"] < gap_threshold:
+                match["review_reason"] = "low_confidence"
+            else:
+                match["review_reason"] = None
             results = matched_results + unmatched_results
         else:
+            # 매칭이 없는 경우에도 review_reason 초기화
+            for r in unmatched_results:
+                if "review_reason" not in r:
+                    r["review_reason"] = None
             results = unmatched_results
+    
+    # 모든 결과에 review_reason이 있는지 확인
+    for r in results:
+        if "review_reason" not in r:
+            r["review_reason"] = None
     
     return results
 
@@ -152,7 +315,7 @@ def main():
     # ===== 설정 =====
     # 입력 파일 경로 설정 (추출용 소스 파일)
     # 우선순위: images/source/ 또는 videos/source/ → 루트 폴더 (호환성)
-    input_filename = "yh.MOV"  # 파일명만 지정 (확장자로 자동 감지)
+    input_filename = "ive_iam.gif"  # 파일명만 지정 (확장자로 자동 감지)
     
     # 파일 타입에 따라 폴더 선택
     file_ext = Path(input_filename).suffix.lower()
@@ -183,19 +346,22 @@ def main():
             input_path = Path("images") / input_filename
     
     emb_dir = Path("outputs") / "embeddings"  # 등록 임베딩 폴더
-    BASE_THRESH = 0.30                        # 기본 임계값
+    BASE_THRESH = 0.32                        # 기본 임계값 (화질 기반 조정 전)
     
-    # 파일명 기반 출력 폴더 구조
+    # 파일명 기반 출력 폴더 구조 (타임스탬프 포함)
     stem = input_path.stem  # 파일명 (확장자 제외)
-    output_base_dir = Path("outputs") / "results" / stem  # outputs/results/yh/
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 예: 20240101_120000
+    output_base_dir = Path("outputs") / "results" / f"{stem}_{timestamp}"  # outputs/results/ive_iam_20240101_120000/
     
     # 하위 폴더들
     matches_dir = output_base_dir / "matches"      # outputs/results/yh/matches/ (매칭된 스냅샷)
+    review_dir = output_base_dir / "matches" / "review"  # 검토 대상 스냅샷
     logs_dir = output_base_dir / "logs"            # outputs/results/yh/logs/ (CSV 로그)
     frames_dir = output_base_dir / "frames"        # outputs/results/yh/frames/ (추출된 프레임)
     
     # 폴더 생성
     matches_dir.mkdir(parents=True, exist_ok=True)
+    review_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     frames_dir.mkdir(parents=True, exist_ok=True)
     
@@ -223,6 +389,7 @@ def main():
     print(f"   기본 임계값: {BASE_THRESH}")
     print(f"   출력 폴더: {output_base_dir}")
     print(f"     - 매칭 스냅샷: {matches_dir}")
+    print(f"     - 검토 대상: {review_dir}")
     print(f"     - 로그 파일: {logs_dir}")
     print(f"     - 프레임 이미지: {frames_dir}")
     print()
@@ -257,8 +424,8 @@ def main():
     log_writer = csv.writer(log_f)
     log_writer.writerow([
         "frame", "person_id", "similarity", "threshold", "is_match",
-        "angle_type", "yaw_angle", "mask_prob", "sim_gap",
-        "x1", "y1", "x2", "y2"
+        "angle_type", "yaw_angle", "mask_prob", "sim_gap", "face_quality",
+        "x1", "y1", "x2", "y2", "review_reason"
     ])
     
     # 4. 통계 변수 초기화
@@ -298,10 +465,13 @@ def main():
                 x1, y1, x2, y2 = map(int, r["bbox"])
                 
                 # CSV 로그 기록
+                review_reason = r.get("review_reason", None) or ""
+                face_quality = r.get("face_quality", "unknown")
                 log_writer.writerow([
                     None, r["best_id"], r["similarity"], r["threshold"],
                     int(r["is_match"]), r["angle_type"], r["yaw_angle"],
-                    r["mask_prob"], r["sim_gap"], x1, y1, x2, y2
+                    r["mask_prob"], r["sim_gap"], face_quality,
+                    x1, y1, x2, y2, review_reason
                 ])
                 
                 # 통계 업데이트
@@ -318,14 +488,21 @@ def main():
                 
                 # 결과 표시
                 label = f"{r['best_id']} {r['similarity']:.2f}"
+                if r.get("face_quality"):
+                    quality_emoji = {"high": "🔍", "medium": "📷", "low": "📱"}.get(r["face_quality"], "")
+                    label += f" [{r['face_quality']}{quality_emoji}]"
                 if r["mask_prob"] > 0.3:
                     label += f" [M:{r['mask_prob']:.1f}]"
                 if r["angle_type"] != "front":
                     label += f" [{r['angle_type']}]"
+                if r.get("review_reason"):
+                    label += f" [REVIEW:{r['review_reason']}]"
                 
                 if r["is_match"]:
                     color = (0, 255, 0)  # 초록
                     hit_count += 1
+                elif r.get("review_reason"):
+                    color = (0, 255, 255)  # 노란색 (검토 대상)
                 else:
                     color = (0, 0, 255)  # 빨강
                 
@@ -336,9 +513,10 @@ def main():
                 # 결과 출력
                 match_status = "✅ 매칭" if r["is_match"] else "❌ 미매칭"
                 mask_info = f" [마스크:{r['mask_prob']:.1f}]" if r["mask_prob"] > 0.3 else ""
+                quality_info = f" [화질:{r.get('face_quality', 'unknown')}]" if r.get("face_quality") else ""
                 print(f"[얼굴 {r['face_idx']}] {match_status}")
                 print(f"  인물: {r['best_id']}, 유사도: {r['similarity']:.3f}, "
-                      f"임계값: {r['threshold']:.3f}")
+                      f"임계값: {r['threshold']:.3f}{quality_info}")
                 print(f"  각도: {r['angle_type']} (yaw={r['yaw_angle']:.1f}°){mask_info}")
                 if r["sim_gap"] > 0:
                     print(f"  유사도 차이: {r['sim_gap']:.3f}")
@@ -375,6 +553,11 @@ def main():
         print(f"   프레임 저장: {'활성화' if SAVE_FRAMES else '비활성화'} (간격: {FRAME_INTERVAL}프레임)")
         print()
         
+        # 프레임 간 연속성 체크를 위한 히스토리 저장
+        # 각 인물별로 최근 N프레임 동안의 매칭 기록 저장
+        frame_history = defaultdict(list)  # {person_id: [frame_idx1, frame_idx2, ...]}
+        continuity_window = 5  # 연속성 체크를 위한 프레임 범위
+        
         # 프레임별 처리
         while True:
             ret, frame = cap.read()
@@ -392,14 +575,44 @@ def main():
             if frame_results:
                 total_faces_detected += len(frame_results)
                 
+                # 프레임 간 연속성 체크 (매칭된 결과에 대해)
+                matched_in_frame = [r for r in frame_results if r["is_match"]]
+                
+                for r in matched_in_frame:
+                    person_id = r["best_id"]
+                    # 이전 프레임들에서 같은 인물이 매칭되었는지 확인
+                    recent_frames = frame_history[person_id]
+                    
+                    # 연속성 체크: 최근 continuity_window 프레임 내에 같은 인물이 있었는지
+                    has_continuity = False
+                    if recent_frames:
+                        # 최근 프레임과의 거리 확인
+                        last_frame = recent_frames[-1]
+                        frame_gap = frame_idx - last_frame
+                        if frame_gap <= continuity_window:
+                            has_continuity = True
+                    
+                    # 연속성이 없고 유사도가 낮으면 검토 대상
+                    # 화질에 따라 임계값 조정
+                    quality = r.get("face_quality", "medium")
+                    continuity_threshold = 0.42 if quality == "high" else (0.40 if quality == "medium" else 0.38)
+                    if not has_continuity and r["similarity"] < continuity_threshold:
+                        # review_reason이 이미 있으면 유지, 없으면 설정
+                        if "review_reason" not in r or r["review_reason"] is None:
+                            r["review_reason"] = "no_continuity"
+                        r["is_match"] = False  # 일단 매칭 해제
+                
                 for r in frame_results:
                     x1, y1, x2, y2 = map(int, r["bbox"])
                     
-                    # CSV 로그 기록
+                    # CSV 로그 기록 (review_reason, face_quality 추가)
+                    review_reason = r.get("review_reason", None) or ""
+                    face_quality = r.get("face_quality", "unknown")
                     log_writer.writerow([
                         frame_idx, r["best_id"], r["similarity"], r["threshold"],
                         int(r["is_match"]), r["angle_type"], r["yaw_angle"],
-                        r["mask_prob"], r["sim_gap"], x1, y1, x2, y2
+                        r["mask_prob"], r["sim_gap"], face_quality,
+                        x1, y1, x2, y2, review_reason
                     ])
                     
                     # 통계 업데이트
@@ -413,13 +626,22 @@ def main():
                         if r["similarity"] > person_stats[r["best_id"]]["max_sim"]:
                             person_stats[r["best_id"]]["max_sim"] = r["similarity"]
                         person_stats[r["best_id"]]["angles"][r["angle_type"]] += 1
+                        
+                        # 히스토리 업데이트
+                        frame_history[r["best_id"]].append(frame_idx)
+                        # 오래된 기록 제거 (메모리 관리)
+                        if len(frame_history[r["best_id"]]) > continuity_window * 2:
+                            frame_history[r["best_id"]] = frame_history[r["best_id"]][-continuity_window:]
                     
-                    # 매칭된 경우 스냅샷 저장
+                    # 매칭된 경우 또는 검토 대상인 경우 스냅샷 저장
                     if r["is_match"]:
                         hit_count += 1
                         
                         # 이미지에 표시
                         label = f"{r['best_id']} {r['similarity']:.2f}"
+                        if r.get("face_quality"):
+                            quality_emoji = {"high": "🔍", "medium": "📷", "low": "📱"}.get(r["face_quality"], "")
+                            label += f" [{r['face_quality']}{quality_emoji}]"
                         if r["mask_prob"] > 0.3:
                             label += f" [M:{r['mask_prob']:.1f}]"
                         if r["angle_type"] != "front":
@@ -433,6 +655,28 @@ def main():
                         # 스냅샷 저장
                         out_name = f"match_f{frame_idx:06d}_{r['best_id']}_{r['similarity']:.2f}.jpg"
                         cv2.imwrite(str(matches_dir / out_name), frame)
+                    
+                    # 검토 대상인 경우 별도 폴더에 저장
+                    elif r.get("review_reason"):
+                        # 이미지에 표시 (노란색)
+                        label = f"{r['best_id']} {r['similarity']:.2f} [REVIEW]"
+                        if r.get("face_quality"):
+                            quality_emoji = {"high": "🔍", "medium": "📷", "low": "📱"}.get(r["face_quality"], "")
+                            label += f" [{r['face_quality']}{quality_emoji}]"
+                        if r["mask_prob"] > 0.3:
+                            label += f" [M:{r['mask_prob']:.1f}]"
+                        if r["angle_type"] != "front":
+                            label += f" [{r['angle_type']}]"
+                        
+                        color = (0, 255, 255)  # 노란색
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                        cv2.putText(frame, label, (x1, max(0, y1 - 10)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                        
+                        # 검토 대상 스냅샷 저장
+                        reason = r["review_reason"]
+                        out_name = f"review_f{frame_idx:06d}_{r['best_id']}_{r['similarity']:.2f}_{reason}.jpg"
+                        cv2.imwrite(str(review_dir / out_name), frame)
                 
                 # 프레임별 요약 출력 (매칭된 얼굴만)
                 matched_in_frame = [r for r in frame_results if r["is_match"]]
@@ -441,8 +685,9 @@ def main():
                           f"매칭: {len(matched_in_frame)}개")
                     for r in matched_in_frame:
                         mask_info = f" [마스크:{r['mask_prob']:.1f}]" if r["mask_prob"] > 0.3 else ""
+                        quality_info = f" [화질:{r.get('face_quality', 'unknown')}]" if r.get("face_quality") else ""
                         print(f"  → {r['best_id']}: {r['similarity']:.3f} "
-                              f"({r['angle_type']}{mask_info})")
+                              f"({r['angle_type']}{quality_info}{mask_info})")
             
             frame_idx += 1
             
@@ -499,6 +744,10 @@ def main():
     print(f"   출력 폴더: {output_base_dir}")
     print(f"   CSV 로그: {log_path}")
     print(f"   매칭 스냅샷: {matches_dir} ({hit_count}장)")
+    if is_video:
+        review_count = len(list(review_dir.glob("review_*.jpg"))) if review_dir.exists() else 0
+        if review_count > 0:
+            print(f"   검토 대상: {review_dir} ({review_count}장)")
     if is_video and SAVE_FRAMES:
         saved_frames = len(list(frames_dir.glob("frame_*.jpg")))
         print(f"   프레임 이미지: {frames_dir} ({saved_frames}장)")
@@ -507,7 +756,9 @@ def main():
     print(f"💡 해석:")
     print(f"   - CSV 로그에는 모든 얼굴 감지 기록이 저장됩니다")
     print(f"   - 스냅샷은 매칭된 얼굴만 저장됩니다")
+    print(f"   - 검토 대상은 matches/review/ 폴더에 별도 저장됩니다")
     print(f"   - 각도 정보와 마스크 가능성이 라벨에 표시됩니다")
+    print(f"   - 오탐 방지: bbox 기반 다중 매칭 필터링 및 프레임 간 연속성 체크 적용")
 
 
 if __name__ == "__main__":

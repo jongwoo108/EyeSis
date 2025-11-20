@@ -180,3 +180,4 @@ def match_with_bank_detailed(face_emb: np.ndarray, gallery: Dict[str, np.ndarray
     else:
         return similarities[0][0], similarities[0][1], similarities[1][1]
 
+
