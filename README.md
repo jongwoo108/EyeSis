@@ -55,17 +55,17 @@ FaceWatch/
 │        └─ frames/           # 추출된 프레임 (선택적)
 │
 ├─ src/
-│  ├─ face_enroll_final.py        # 통합 등록 스크립트 (권장)
+│  ├─ face_enroll.py               # 통합 등록 스크립트 (권장)
 │  │                                # - 기본 등록: enroll 폴더에서 등록
 │  │                                # - 영상에서 자동 수집
 │  │                                # - 수동 추가: 이미지 폴더에서 추가
-│  ├─ face_match_cctv_final.py     # 통합 인식 스크립트 (권장)
+│  ├─ face_match_cctv.py           # 통합 인식 스크립트 (권장)
 │  │                                # - 이미지/영상 모두 처리
 │  │                                # - 얼굴 각도 감지
 │  │                                # - 마스크 감지 및 적응형 임계값
 │  │                                # - 오탐 방지 (sim_gap 체크)
 │  │                                # - CSV 로그 및 스냅샷 저장
-│  ├─ embedding_analysis_final.py  # 임베딩 분석 도구
+│  ├─ embedding_analysis.py        # 임베딩 분석 도구
 │  └─ utils/                       # 유틸리티 모듈
 │     ├─ device_config.py          # GPU/CPU 설정
 │     ├─ gallery_loader.py        # 갤러리 로더
@@ -95,7 +95,7 @@ FaceWatch/
 **통합 등록 스크립트 사용 (권장):**
 
 ```bash
-python src/face_enroll_final.py
+python src/face_enroll.py
 ```
 
 스크립트 내에서 모드를 선택할 수 있습니다:
@@ -136,13 +136,13 @@ images/
 **통합 인식 스크립트 사용 (권장):**
 
 ```bash
-python src/face_match_cctv_final.py
+python src/face_match_cctv.py
 ```
 
 스크립트 내에서 입력 파일명만 지정하면 자동으로 처리합니다:
 
 ```python
-# src/face_match_cctv_final.py 내부 설정
+# src/face_match_cctv.py 내부 설정
 input_filename = "yh.MOV"  # 파일명만 지정
 ```
 
@@ -191,14 +191,14 @@ outputs/
 ```bash
 # images/source/test.jpg 파일 분석
 # 스크립트 내부에서 input_filename = "test.jpg" 설정
-python src/face_match_cctv_final.py
+python src/face_match_cctv.py
 ```
 
 **영상 분석:**
 ```bash
 # videos/source/yh.MOV 파일 분석
 # 스크립트 내부에서 input_filename = "yh.MOV" 설정
-python src/face_match_cctv_final.py
+python src/face_match_cctv.py
 ```
 
 **프레임 저장 옵션:**
@@ -210,7 +210,7 @@ python src/face_match_cctv_final.py
 ### 3. 임베딩 분석 도구 (Embedding Analysis)
 
 ```bash
-python src/embedding_analysis_final.py
+python src/embedding_analysis.py
 ```
 
 임베딩 파일의 통계 및 분포를 분석합니다.
@@ -295,7 +295,7 @@ python src/embedding_analysis_final.py
 #    images/enroll/danielle/danielle.jpg
 
 # 2. 등록 실행
-python src/face_enroll_final.py
+python src/face_enroll.py
 # MODE = 1로 설정하여 기본 등록 실행
 ```
 
@@ -309,7 +309,7 @@ python src/face_enroll_final.py
 #    input_filename = "test.jpg"
 
 # 3. 분석 실행
-python src/face_match_cctv_final.py
+python src/face_match_cctv.py
 ```
 
 ### 3. 영상 분석
@@ -322,7 +322,7 @@ python src/face_match_cctv_final.py
 #    input_filename = "yh.MOV"
 
 # 3. 분석 실행
-python src/face_match_cctv_final.py
+python src/face_match_cctv.py
 ```
 
 ### 4. 결과 확인
