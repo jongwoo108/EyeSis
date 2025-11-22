@@ -38,6 +38,81 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
     return vec / norm
 
 
+def add_embedding_to_bank(person_id: str, embedding: np.ndarray, emb_dir: Path, 
+                          similarity_threshold: float = 0.95, verbose: bool = False,
+                          angle_type: str = None, yaw_angle: float = None):
+    """
+    매칭된 얼굴의 임베딩을 Bank에 추가
+    
+    Args:
+        person_id: 인물 ID
+        embedding: 추가할 임베딩 (512차원, L2 정규화됨)
+        emb_dir: 임베딩 저장 디렉토리
+        similarity_threshold: 중복 체크 임계값 (이상이면 중복으로 간주)
+        verbose: 상세 출력 여부
+        angle_type: 얼굴 각도 타입 (front, left, right, left_profile, right_profile)
+        yaw_angle: yaw 각도 값 (도 단위)
+    
+    Returns:
+        추가 성공 여부 (True: 추가됨, False: 중복으로 스킵)
+    """
+    import json
+    
+    # 사람별 폴더 경로
+    person_dir = emb_dir / person_id
+    bank_path = person_dir / "bank.npy"
+    angles_path = person_dir / "angles.json"  # 각도 정보 저장 파일
+    
+    # 기존 bank 로드
+    if bank_path.exists():
+        bank = np.load(bank_path)
+    else:
+        bank = np.empty((0, 512), dtype=np.float32)
+    
+    # 기존 각도 정보 로드
+    if angles_path.exists():
+        with open(angles_path, 'r', encoding='utf-8') as f:
+            angles_info = json.load(f)
+    else:
+        angles_info = {"angle_types": [], "yaw_angles": []}
+    
+    # 중복 체크
+    if bank.shape[0] > 0:
+        max_sim = float(np.max(bank @ embedding))
+        if max_sim >= similarity_threshold:
+            if verbose:
+                print(f"     ⏭ Bank 스킵 (중복: {max_sim:.3f} >= {similarity_threshold})")
+            return False  # 중복으로 스킵
+    
+    # Bank에 추가
+    new_emb = embedding.reshape(1, -1)  # (1, 512)
+    updated_bank = np.vstack([bank, new_emb])
+    
+    # 각도 정보 추가
+    angles_info["angle_types"].append(angle_type if angle_type else "unknown")
+    angles_info["yaw_angles"].append(float(yaw_angle) if yaw_angle is not None else 0.0)
+    
+    # Centroid 재계산
+    updated_centroid = updated_bank.mean(axis=0)
+    updated_centroid = l2_normalize(updated_centroid)
+    
+    # 저장
+    person_dir.mkdir(parents=True, exist_ok=True)
+    np.save(bank_path, updated_bank)
+    centroid_path = person_dir / "centroid.npy"
+    np.save(centroid_path, updated_centroid)
+    
+    # 각도 정보 저장
+    with open(angles_path, 'w', encoding='utf-8') as f:
+        json.dump(angles_info, f, indent=2, ensure_ascii=False)
+    
+    if verbose:
+        angle_info = f" [{angle_type}]" if angle_type else ""
+        print(f"     ✅ Bank 추가: {person_id} (총 {updated_bank.shape[0]}개 임베딩{angle_info})")
+    
+    return True  # 추가 성공
+
+
 def calculate_bbox_iou(bbox1, bbox2):
     """
     두 bbox 간의 IoU(Intersection over Union) 계산
@@ -315,7 +390,7 @@ def main():
     # ===== 설정 =====
     # 입력 파일 경로 설정 (추출용 소스 파일)
     # 우선순위: images/source/ 또는 videos/source/ → 루트 폴더 (호환성)
-    input_filename = "ive_iam.gif"  # 파일명만 지정 (확장자로 자동 감지)
+    input_filename = "catch_criminal.MOV"  # 파일명만 지정 (확장자로 자동 감지)
     
     # 파일 타입에 따라 폴더 선택
     file_ext = Path(input_filename).suffix.lower()
@@ -347,6 +422,10 @@ def main():
     
     emb_dir = Path("outputs") / "embeddings"  # 등록 임베딩 폴더
     BASE_THRESH = 0.32                        # 기본 임계값 (화질 기반 조정 전)
+    
+    # Bank 자동 추가 설정
+    AUTO_ADD_TO_BANK = True  # 매칭 성공 시 Bank에 자동 추가 여부
+    BANK_DUPLICATE_THRESHOLD = 0.95  # 중복 체크 임계값 (0.95 이상이면 중복으로 간주)
     
     # 파일명 기반 출력 폴더 구조 (타임스탬프 포함)
     stem = input_path.stem  # 파일명 (확장자 제외)
@@ -387,6 +466,9 @@ def main():
     print(f"   파일 타입: {'이미지' if is_image else '영상'}")
     print(f"   임베딩 폴더: {emb_dir}")
     print(f"   기본 임계값: {BASE_THRESH}")
+    print(f"   Bank 자동 추가: {'활성화' if AUTO_ADD_TO_BANK else '비활성화'}")
+    if AUTO_ADD_TO_BANK:
+        print(f"     - 중복 체크 임계값: {BANK_DUPLICATE_THRESHOLD}")
     print(f"   출력 폴더: {output_base_dir}")
     print(f"     - 매칭 스냅샷: {matches_dir}")
     print(f"     - 검토 대상: {review_dir}")
@@ -433,6 +515,7 @@ def main():
     hit_count = 0
     total_faces_detected = 0
     max_sim_ever = -1.0
+    bank_added_count = 0  # Bank에 추가된 임베딩 개수
     person_stats = defaultdict(lambda: {"count": 0, "max_sim": 0.0, "angles": defaultdict(int)})
     angle_stats = defaultdict(lambda: {"total": 0, "matched": 0})
     
@@ -478,6 +561,25 @@ def main():
                 if r["similarity"] > max_sim_ever:
                     max_sim_ever = r["similarity"]
                 
+                # Bank에 자동 추가 (매칭 성공 시)
+                bank_added = False
+                if r["is_match"] and AUTO_ADD_TO_BANK:
+                    bank_added = add_embedding_to_bank(
+                        person_id=r["best_id"],
+                        embedding=r["embedding"],
+                        emb_dir=emb_dir,
+                        similarity_threshold=BANK_DUPLICATE_THRESHOLD,
+                        verbose=False,
+                        angle_type=r.get("angle_type"),
+                        yaw_angle=r.get("yaw_angle")
+                    )
+                    if bank_added:
+                        bank_added_count += 1
+                
+                # 통계 업데이트
+                if r["similarity"] > max_sim_ever:
+                    max_sim_ever = r["similarity"]
+                
                 angle_stats[r["angle_type"]]["total"] += 1
                 if r["is_match"]:
                     angle_stats[r["angle_type"]]["matched"] += 1
@@ -497,6 +599,8 @@ def main():
                     label += f" [{r['angle_type']}]"
                 if r.get("review_reason"):
                     label += f" [REVIEW:{r['review_reason']}]"
+                if bank_added:
+                    label += " [BANK+]"
                 
                 if r["is_match"]:
                     color = (0, 255, 0)  # 초록
@@ -532,7 +636,7 @@ def main():
             print("⚠ 얼굴을 하나도 찾지 못했습니다.")
     
     else:
-        # ===== 영상 처리 =====
+        # ===== 영상 파일 처리 =====
         cap = cv2.VideoCapture(str(input_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -549,6 +653,7 @@ def main():
         # 프레임 저장 옵션
         SAVE_FRAMES = True  # 프레임 이미지 저장 여부 (False로 변경하면 저장 안함)
         FRAME_INTERVAL = 30  # N프레임마다 저장 (성능 고려, 1이면 모든 프레임 저장)
+        PROCESS_EVERY_N_FRAMES = 1  # 영상 파일은 모든 프레임 처리
         
         print(f"   프레임 저장: {'활성화' if SAVE_FRAMES else '비활성화'} (간격: {FRAME_INTERVAL}프레임)")
         print()
@@ -615,6 +720,21 @@ def main():
                         x1, y1, x2, y2, review_reason
                     ])
                     
+                    # Bank에 자동 추가 (매칭 성공 시)
+                    bank_added = False
+                    if r["is_match"] and AUTO_ADD_TO_BANK:
+                        bank_added = add_embedding_to_bank(
+                            person_id=r["best_id"],
+                            embedding=r["embedding"],
+                            emb_dir=emb_dir,
+                            similarity_threshold=BANK_DUPLICATE_THRESHOLD,
+                            verbose=False,
+                            angle_type=r.get("angle_type"),
+                            yaw_angle=r.get("yaw_angle")
+                        )
+                        if bank_added:
+                            bank_added_count += 1
+                    
                     # 통계 업데이트
                     if r["similarity"] > max_sim_ever:
                         max_sim_ever = r["similarity"]
@@ -633,7 +753,7 @@ def main():
                         if len(frame_history[r["best_id"]]) > continuity_window * 2:
                             frame_history[r["best_id"]] = frame_history[r["best_id"]][-continuity_window:]
                     
-                    # 매칭된 경우 또는 검토 대상인 경우 스냅샷 저장
+                    # 매칭된 경우 또는 검토 대상인 경우 화면에 표시 및 저장
                     if r["is_match"]:
                         hit_count += 1
                         
@@ -646,6 +766,8 @@ def main():
                             label += f" [M:{r['mask_prob']:.1f}]"
                         if r["angle_type"] != "front":
                             label += f" [{r['angle_type']}]"
+                        if bank_added:
+                            label += " [BANK+]"
                         
                         color = (0, 255, 0)  # 초록
                         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -715,6 +837,8 @@ def main():
     print(f"   감지된 얼굴 수: {total_faces_detected}개")
     print(f"   매칭된 얼굴 수: {hit_count}개")
     print(f"   관측된 최대 유사도: {max_sim_ever:.3f}")
+    if AUTO_ADD_TO_BANK:
+        print(f"   Bank에 추가된 임베딩: {bank_added_count}개")
     print()
     
     # 인물별 통계
