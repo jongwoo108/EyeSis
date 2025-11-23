@@ -1,0 +1,8 @@
+# 이 폴더는 backend/database/*.json 파일들을 저장합니다.
+# 레거시 지원용이며, 권장 방법은 outputs/embeddings를 사용하는 것입니다.
+
+
+
+
+
+

@@ -141,13 +141,15 @@ def match_with_bank(face_emb: np.ndarray, gallery: Dict[str, np.ndarray]) -> Tup
     return best_person, best_sim
 
 
-def match_with_bank_detailed(face_emb: np.ndarray, gallery: Dict[str, np.ndarray]) -> Tuple[str, float, float]:
+def match_with_bank_detailed(face_emb: np.ndarray, gallery: Dict) -> Tuple[str, float, float]:
     """
     얼굴 임베딩과 갤러리를 비교하여 가장 유사한 사람 찾기 (상세 정보 포함)
     
     Args:
         face_emb: 얼굴 임베딩 벡터 (512차원)
-        gallery: load_gallery()로 로드한 갤러리 딕셔너리
+        gallery: 갤러리 딕셔너리
+            - 새 구조: {person_id: {"base": np.ndarray, "dynamic": Optional[np.ndarray]}}
+            - 구 구조 (backward compatibility): {person_id: np.ndarray}
     
     Returns:
         (best_person_id, best_similarity, second_similarity) 튜플
@@ -160,15 +162,41 @@ def match_with_bank_detailed(face_emb: np.ndarray, gallery: Dict[str, np.ndarray
     face_emb = l2_normalize(face_emb.astype("float32"))
     
     similarities = []
-    for person_id, emb_data in gallery.items():
-        if emb_data.ndim == 2:
-            # Bank: 최대값 사용
-            sims = np.dot(emb_data, face_emb)
-            max_sim = float(np.max(sims))
+    for person_id, entry in gallery.items():
+        # 새 구조: {"base": ..., "dynamic": ...}
+        if isinstance(entry, dict) and "base" in entry:
+            base_bank = entry["base"]
+            dynamic_bank = entry.get("dynamic")
+            
+            # Base 유사도 계산
+            if base_bank.ndim == 2:
+                sim_base = float(np.max(np.dot(base_bank, face_emb)))
+            else:
+                sim_base = float(np.dot(base_bank, face_emb))
+            
+            # Dynamic 유사도 계산 (있으면)
+            sim_dyn = -1.0
+            if dynamic_bank is not None and dynamic_bank.shape[0] > 0:
+                if dynamic_bank.ndim == 2:
+                    sim_dyn = float(np.max(np.dot(dynamic_bank, face_emb)))
+                else:
+                    sim_dyn = float(np.dot(dynamic_bank, face_emb))
+            
+            # Base와 Dynamic 중 최대값 사용
+            person_best_sim = max(sim_base, sim_dyn)
+            
         else:
-            # Centroid: 단일 값
-            max_sim = float(np.dot(emb_data, face_emb))
-        similarities.append((person_id, max_sim))
+            # 구 구조 (backward compatibility): 단일 np.ndarray
+            emb_data = entry
+            if emb_data.ndim == 2:
+                # Bank: 최대값 사용
+                sims = np.dot(emb_data, face_emb)
+                person_best_sim = float(np.max(sims))
+            else:
+                # Centroid: 단일 값
+                person_best_sim = float(np.dot(emb_data, face_emb))
+        
+        similarities.append((person_id, person_best_sim))
     
     # 유사도 기준으로 정렬
     similarities.sort(key=lambda x: x[1], reverse=True)

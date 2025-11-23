@@ -57,7 +57,9 @@ def get_main_face_embedding(app: FaceAnalysis, img_path: Path) -> np.ndarray | N
 def save_embeddings(person_id: str, emb_list: list[np.ndarray], out_dir: Path, 
                    save_bank: bool = True, save_centroid: bool = True):
     """
-    임베딩 리스트를 bank와 centroid로 저장 (사람별 폴더 구조)
+    임베딩 리스트를 bank_base와 centroid_base로 저장 (사람별 폴더 구조)
+    
+    Enrollment 시에는 기준 Bank(base)만 생성하고, dynamic은 생성하지 않습니다.
     
     Args:
         person_id: 사람 ID
@@ -78,14 +80,28 @@ def save_embeddings(person_id: str, emb_list: list[np.ndarray], out_dir: Path,
     person_dir.mkdir(parents=True, exist_ok=True)
     
     if save_bank:
-        bank_path = person_dir / "bank.npy"
-        np.save(bank_path, embs)
-        print(f"     Bank 저장: {bank_path} ({embs.shape[0]}개 임베딩)")
+        # bank_base.npy 저장 (기준 Bank, read-only)
+        bank_base_path = person_dir / "bank_base.npy"
+        np.save(bank_base_path, embs)
+        print(f"     Base Bank 저장: {bank_base_path} ({embs.shape[0]}개 임베딩)")
+        
+        # Backward compatibility: 기존 bank.npy가 없으면 생성 (legacy 지원)
+        legacy_bank_path = person_dir / "bank.npy"
+        if not legacy_bank_path.exists():
+            np.save(legacy_bank_path, embs)
+            print(f"     Legacy Bank 저장 (backward compatibility): {legacy_bank_path}")
     
     if save_centroid:
-        centroid_path = person_dir / "centroid.npy"
-        np.save(centroid_path, centroid)
-        print(f"     Centroid 저장: {centroid_path}")
+        # centroid_base.npy 저장 (기준 Centroid, read-only)
+        centroid_base_path = person_dir / "centroid_base.npy"
+        np.save(centroid_base_path, centroid)
+        print(f"     Base Centroid 저장: {centroid_base_path}")
+        
+        # Backward compatibility: 기존 centroid.npy가 없으면 생성 (legacy 지원)
+        legacy_centroid_path = person_dir / "centroid.npy"
+        if not legacy_centroid_path.exists():
+            np.save(legacy_centroid_path, centroid)
+            print(f"     Legacy Centroid 저장 (backward compatibility): {legacy_centroid_path}")
     
     print(f"     L2 norm: {np.linalg.norm(centroid):.4f}")
 

@@ -2,6 +2,37 @@
 """
 마스크 감지 유틸리티
 얼굴의 하반부(코, 입 영역)가 가려져 있는지 간단히 판단합니다.
+
+TODO: 향후 랜드마크 기반 occlusion 판단 설계 방향
+==================================================
+현재는 유사도 기반으로 마스크 가능성을 추정하지만, 이는 오인식의 원인이 될 수 있습니다.
+향후 제대로 설계할 때는 다음과 같은 방향을 고려해야 합니다:
+
+1. 랜드마크 기반 영역 분리
+   - InsightFace에서 제공하는 얼굴 랜드마크(눈, 코, 입 등)를 활용
+   - 상반부(눈 영역)와 하반부(코, 입 영역)를 분리하여 각각의 occlusion 비율 계산
+
+2. occlusion 판단
+   - 각 영역의 가려짐 정도를 픽셀 단위로 분석
+   - 마스크: 하반부 occlusion 높음, 상반부 occlusion 낮음
+   - 모자: 상반부 occlusion 높음, 하반부 occlusion 낮음
+   - 안경: 눈 영역 일부 occlusion, 나머지 정상
+
+3. 매칭 전략 결정
+   - 상반부만 보이는 경우: 상반부(눈) 기반 매칭만 수행
+   - 하반부만 보이는 경우: 하반부(코, 입) 기반 매칭만 수행
+   - 보이는 영역이 너무 적으면(예: 30% 미만): 아예 unknown으로 처리
+   - 일부 케이스에서만 threshold를 아주 제한적으로 조정
+
+4. 현재 로직의 문제점
+   - "유사도 낮음 → 마스크일지도? → threshold 내려!" 패턴은 오인식의 주요 원인
+   - 유사도가 낮은 이유는 마스크 때문이 아니라 완전히 다른 사람일 수 있음
+   - 따라서 현재는 mask_prob를 threshold 조정에 사용하지 않고, 메타데이터/로그용으로만 사용
+
+5. 구현 시 참고사항
+   - InsightFace의 face.kps (랜드마크 좌표) 활용
+   - 각 랜드마크 영역의 가려짐 정도를 계산하는 함수 필요
+   - occlusion 비율에 따른 매칭 전략 선택 로직 필요
 """
 import cv2
 import numpy as np
@@ -83,13 +114,18 @@ def estimate_mask_from_similarity(similarity: float) -> float:
     """
     실제 매칭 유사도로 마스크 착용 가능성 추정
     
+    주의: 이 함수는 현재 threshold 조정에 사용되지 않습니다.
+    메타데이터/로그용으로만 사용되며, 향후 랜드마크 기반 occlusion 판단으로 대체될 예정입니다.
+    
     Args:
         similarity: 실제 매칭 결과의 유사도
     
     Returns:
-        마스크 착용 가능성 (0.0 ~ 1.0)
+        마스크 착용 가능성 (0.0 ~ 1.0) - 메타데이터/로그용
     """
     # 마스크를 쓴 얼굴은 보통 0.25~0.35 사이의 유사도를 보임
+    # 하지만 유사도가 낮은 이유가 마스크 때문이 아니라 완전히 다른 사람일 수도 있음
+    # 따라서 이 값은 threshold 조정에 사용하지 않고, 단지 메타데이터로만 사용
     if similarity < 0.25:
         return 0.9  # 매우 높은 가능성
     elif similarity < 0.28:
@@ -171,40 +207,22 @@ def get_adjusted_threshold(base_threshold: float, mask_probability: float, simil
     """
     마스크 착용 가능성, 유사도, 화질에 따라 적응형 임계값 계산
     
-    마스크를 쓴 얼굴은 유사도가 낮게 나오므로, 마스크 가능성이 높을 때
-    더 낮은 임계값을 적용하여 인식 성능을 향상시킵니다.
-    화질이 좋으면 더 높은 임계값을 사용하여 오탐을 줄입니다.
+    ⚠️ 주의: 이 함수는 현재 사용되지 않습니다.
+    마스크 기반 threshold 조정 로직이 제거되었으며, 향후 랜드마크 기반 occlusion 판단으로 대체될 예정입니다.
+    
+    현재는 화질만으로 threshold를 결정하며, mask_probability는 무시됩니다.
+    이 함수는 호환성을 위해 유지되지만, 실제로는 get_quality_adjusted_threshold()를 사용합니다.
     
     Args:
-        base_threshold: 기본 임계값 (예: 0.32)
-        mask_probability: 마스크 착용 가능성 (0.0 ~ 1.0)
-        similarity: 현재 최고 유사도
-        face_quality: 화질 등급 ("high", "medium", "low")
+        base_threshold: 기본 임계값 (예: 0.32) - 사용되지 않음
+        mask_probability: 마스크 착용 가능성 (0.0 ~ 1.0) - 무시됨
+        similarity: 현재 최고 유사도 - 무시됨
+        face_quality: 화질 등급 ("high", "medium", "low") - 이것만 사용
     
     Returns:
-        조정된 임계값
+        조정된 임계값 (화질 기반만)
     """
-    # 먼저 화질에 따라 기본 임계값 조정
-    quality_adjusted = get_quality_adjusted_threshold(base_threshold, face_quality)
-    
-    if mask_probability < 0.3:
-        # 마스크 가능성이 낮으면 화질 조정된 임계값 사용
-        return quality_adjusted
-    
-    # 마스크 가능성이 높으면 더 낮은 임계값 적용 (인식률 개선을 위해 조정)
-    # 유사도가 0.25~0.30 사이일 때 마스크로 판단하고 0.24~0.28 임계값 사용
-    if similarity < 0.28:
-        # 매우 낮은 유사도 → 마스크 가능성 매우 높음 → 임계값 낮춤
-        adjusted_threshold = quality_adjusted - 0.06
-    elif similarity < 0.32:
-        # 낮은 유사도 → 마스크 가능성 높음 → 임계값 낮춤
-        adjusted_threshold = quality_adjusted - 0.04
-    else:
-        # 중간 유사도 → 마스크 가능성 중간 → 약간 낮춤
-        adjusted_threshold = quality_adjusted - 0.02
-    
-    # 최소값 보장 (너무 낮으면 오탐 증가)
-    # 고화질일 때는 최소 0.28, 중화질/저화질일 때는 최소 0.22
-    min_threshold = 0.28 if face_quality == "high" else 0.22
-    return max(adjusted_threshold, min_threshold)
+    # 마스크 기반 threshold 조정 로직 제거
+    # 화질만으로 threshold 결정
+    return get_quality_adjusted_threshold(base_threshold, face_quality)
 
