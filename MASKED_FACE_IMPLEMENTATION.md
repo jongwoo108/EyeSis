@@ -177,3 +177,7 @@ MASKED_TRACKING_IOU_THRESHOLD = 0.5  # bbox tracking을 위한 IoU 임계값
 2. tracking 알고리즘 고도화 (Kalman filter 등)
 3. masked bank 크기 제한 및 오래된 임베딩 제거 로직
 
+
+
+
+

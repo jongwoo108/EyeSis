@@ -1,0 +1,22 @@
+{
+  "frame_idx": 362,
+  "timestamp": 12.066902067889192,
+  "faces": [
+    {
+      "bbox": [
+        1026,
+        538,
+        1118,
+        703
+      ],
+      "status": "unknown",
+      "name": "Unknown",
+      "person_id": null,
+      "confidence": 23,
+      "color": "yellow",
+      "angle_type": "right_profile",
+      "yaw_angle": 172.66763434330076,
+      "bank_type": null
+    }
+  ]
+}

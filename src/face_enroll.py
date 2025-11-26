@@ -9,15 +9,21 @@
 
 참고: 영상에서 임베딩 수집은 face_match_cctv.py에서 처리합니다.
 """
+import sys
+from pathlib import Path
+
+# 프로젝트 루트를 Python 경로에 추가
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # CUDA 경로를 먼저 설정
-from utils.device_config import _ensure_cuda_in_path
+from src.utils.device_config import _ensure_cuda_in_path
 _ensure_cuda_in_path()
 
 from insightface.app import FaceAnalysis
 import cv2
 import numpy as np
-from pathlib import Path
-from utils.device_config import get_device_id, safe_prepare_insightface
+from src.utils.device_config import get_device_id, safe_prepare_insightface
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 
@@ -31,13 +37,37 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
 
 
 def get_main_face_embedding(app: FaceAnalysis, img_path: Path) -> np.ndarray | None:
-    """이미지에서 가장 큰 얼굴 한 개의 임베딩을 반환"""
+    """이미지에서 가장 큰 얼굴 한 개의 임베딩을 반환 (측면 얼굴 감지 개선)"""
     img = cv2.imread(str(img_path))
     if img is None:
         print(f"  ⚠️ 이미지 읽기 실패: {img_path}")
         return None
 
+    # 먼저 원본 이미지로 시도
     faces = app.get(img)
+    
+    # 얼굴을 찾지 못한 경우, 이미지 전처리 후 재시도
+    if len(faces) == 0:
+        # 이미지 밝기/대비 조정
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        enhanced = cv2.merge([l, a, b])
+        enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        
+        # 전처리된 이미지로 재시도
+        faces = app.get(enhanced)
+        
+        # 여전히 실패하면 업스케일링 후 재시도
+        if len(faces) == 0:
+            h, w = img.shape[:2]
+            if h < 1280 or w < 1280:
+                scale = max(1280 / h, 1280 / w)
+                new_h, new_w = int(h * scale), int(w * scale)
+                upscaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                faces = app.get(upscaled)
+    
     if len(faces) == 0:
         print(f"  ⚠️ 얼굴 미검출: {img_path}")
         return None

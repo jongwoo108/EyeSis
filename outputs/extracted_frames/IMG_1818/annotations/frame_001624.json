@@ -1,0 +1,38 @@
+{
+  "frame_idx": 1624,
+  "timestamp": 54.1343893874366,
+  "faces": [
+    {
+      "bbox": [
+        725,
+        362,
+        835,
+        504
+      ],
+      "status": "unknown",
+      "name": "Unknown",
+      "person_id": null,
+      "confidence": 36,
+      "color": "yellow",
+      "angle_type": "right_profile",
+      "yaw_angle": 48.14122306619666,
+      "bank_type": null
+    },
+    {
+      "bbox": [
+        1444,
+        761,
+        1659,
+        955
+      ],
+      "status": "unknown",
+      "name": "Unknown",
+      "person_id": null,
+      "confidence": 18,
+      "color": "yellow",
+      "angle_type": "front",
+      "yaw_angle": 6.657245578654547,
+      "bank_type": null
+    }
+  ]
+}

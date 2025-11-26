@@ -1,0 +1,38 @@
+{
+  "frame_idx": 1550,
+  "timestamp": 51.66767460007803,
+  "faces": [
+    {
+      "bbox": [
+        405,
+        350,
+        543,
+        501
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 62,
+      "color": "red",
+      "angle_type": "right",
+      "yaw_angle": 28.660105886921638,
+      "bank_type": "base"
+    },
+    {
+      "bbox": [
+        1233,
+        516,
+        1344,
+        681
+      ],
+      "status": "normal",
+      "name": "ja",
+      "person_id": "ja",
+      "confidence": 56,
+      "color": "green",
+      "angle_type": "left_profile",
+      "yaw_angle": -65.71325678237548,
+      "bank_type": "base"
+    }
+  ]
+}

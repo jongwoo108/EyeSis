@@ -1,0 +1,38 @@
+{
+  "image_path": "images\\test\\test_img-00032.jpg",
+  "image_name": "test_img-00032.jpg",
+  "faces": [
+    {
+      "bbox": [
+        1312,
+        864,
+        1483,
+        1053
+      ],
+      "status": "normal",
+      "name": "ja",
+      "person_id": "ja",
+      "confidence": 52,
+      "color": "green",
+      "angle_type": "front",
+      "yaw_angle": -10.310985266861287,
+      "bank_type": "base"
+    },
+    {
+      "bbox": [
+        888,
+        386,
+        982,
+        535
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 48,
+      "color": "red",
+      "angle_type": "right_profile",
+      "yaw_angle": 61.16325949869513,
+      "bank_type": "base"
+    }
+  ]
+}

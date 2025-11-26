@@ -27,7 +27,7 @@ from collections import defaultdict
 from utils.gallery_loader import load_gallery, match_with_bank, match_with_bank_detailed
 from utils.device_config import get_device_id, safe_prepare_insightface
 from utils.mask_detector import estimate_mask_from_similarity, get_adjusted_threshold, estimate_face_quality
-from utils.face_angle_detector import estimate_face_angle
+from utils.face_angle_detector import estimate_face_angle, is_diverse_angle, is_all_angles_collected
 
 
 def l2_normalize(vec: np.ndarray) -> np.ndarray:
@@ -38,11 +38,115 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
     return vec / norm
 
 
+def save_angle_separated_banks(dynamic_bank: np.ndarray, angles_info: dict, person_dir: Path):
+    """
+    동적 bank를 각도별로 분리하여 저장 (평가용 - 정답 데이터와 비교하기 위함)
+    
+    주의: 이 파일들은 인식에는 사용되지 않습니다. 평가 목적으로만 사용됩니다.
+    인식에는 bank_dynamic.npy (통합 파일)만 사용됩니다.
+    
+    정답 데이터 구조(embeddings_manual)와 동일하게 저장:
+    - bank_{angle_type}.npy: 해당 각도의 모든 임베딩 배열 (평가용)
+    - embedding_{angle_type}.npy: 해당 각도의 centroid(평균) 임베딩 (평가용)
+    
+    Args:
+        dynamic_bank: 동적 bank 배열 (N, 512)
+        angles_info: 각도 정보 딕셔너리 {"angle_types": [...], "yaw_angles": [...]}
+        person_dir: 사람별 폴더 경로
+    """
+    if dynamic_bank.shape[0] == 0:
+        return
+    
+    angle_types = angles_info.get("angle_types", [])
+    
+    # 각도별로 그룹화
+    angle_groups = {}
+    for i, angle_type in enumerate(angle_types):
+        if angle_type not in angle_groups:
+            angle_groups[angle_type] = []
+        angle_groups[angle_type].append(i)
+    
+    # 각도별 파일 저장
+    for angle_type, indices in angle_groups.items():
+        if not indices:
+            continue
+        
+        # 해당 각도의 임베딩 추출
+        angle_bank = dynamic_bank[indices]
+        
+        # 각도별 bank 파일 저장 (정답 데이터와 동일한 구조: bank_{angle_type}.npy)
+        angle_bank_path = person_dir / f"bank_{angle_type}.npy"
+        np.save(angle_bank_path, angle_bank)
+        
+        # 각도별 centroid 계산 및 저장 (정답 데이터와 동일한 구조: embedding_{angle_type}.npy)
+        angle_centroid = angle_bank.mean(axis=0)
+        angle_centroid = l2_normalize(angle_centroid)
+        angle_embedding_path = person_dir / f"embedding_{angle_type}.npy"
+        np.save(angle_embedding_path, angle_centroid)
+
+def reload_person_in_gallery(person_id: str, emb_dir: Path, gallery: dict, use_bank: bool = True):
+    """
+    특정 인물의 갤러리 항목을 다시 로드하여 갱신 (Bank 추가 후 메모리 캐시 갱신용)
+    
+    Args:
+        person_id: 인물 ID
+        emb_dir: 임베딩 저장 디렉토리
+        gallery: 갤러리 딕셔너리 (in-place 수정됨)
+        use_bank: True면 bank 우선 사용
+    
+    Returns:
+        갱신 성공 여부 (True: 갱신됨, False: 실패)
+    """
+    person_dir = emb_dir / person_id
+    if not person_dir.exists():
+        return False
+    
+    bank_base_path = person_dir / "bank_base.npy"
+    bank_dynamic_path = person_dir / "bank_dynamic.npy"
+    bank_legacy_path = person_dir / "bank.npy"
+    
+    if use_bank:
+        banks = []
+        
+        # Base bank 로드
+        if bank_base_path.exists():
+            base_bank = np.load(bank_base_path)
+            if base_bank.ndim == 2:
+                base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
+                banks.append(base_bank)
+        elif bank_legacy_path.exists():
+            legacy_bank = np.load(bank_legacy_path)
+            if legacy_bank.ndim == 2:
+                legacy_bank = legacy_bank / (np.linalg.norm(legacy_bank, axis=1, keepdims=True) + 1e-6)
+                banks.append(legacy_bank)
+        
+        # Dynamic bank 로드
+        if bank_dynamic_path.exists():
+            dynamic_bank = np.load(bank_dynamic_path)
+            if dynamic_bank.ndim == 2 and dynamic_bank.shape[0] > 0:
+                dynamic_bank = dynamic_bank / (np.linalg.norm(dynamic_bank, axis=1, keepdims=True) + 1e-6)
+                banks.append(dynamic_bank)
+        
+        # Base와 Dynamic 통합
+        if banks:
+            combined_bank = np.vstack(banks)
+            gallery[person_id] = combined_bank
+            return True
+    
+    return False
+
+
 def add_embedding_to_bank(person_id: str, embedding: np.ndarray, emb_dir: Path, 
                           similarity_threshold: float = 0.95, verbose: bool = False,
-                          angle_type: str = None, yaw_angle: float = None):
+                          angle_type: str = None, yaw_angle: float = None,
+                          gallery: dict = None):
     """
-    매칭된 얼굴의 임베딩을 Bank에 추가
+    매칭된 얼굴의 임베딩을 동적 Bank에 추가 (각도별 다양성 체크 포함)
+    
+    목적: 정면으로 식별된 인물에 대해 CCTV 영상에서 움직일 때 추가 각도 임베딩을 수집
+    - 기존 base 임베딩(bank_base.npy)은 보호
+    - 동적 임베딩은 bank_dynamic.npy에 별도 저장
+    - gallery가 제공되면 메모리 캐시도 즉시 갱신
     
     Args:
         person_id: 인물 ID
@@ -52,63 +156,141 @@ def add_embedding_to_bank(person_id: str, embedding: np.ndarray, emb_dir: Path,
         verbose: 상세 출력 여부
         angle_type: 얼굴 각도 타입 (front, left, right, left_profile, right_profile)
         yaw_angle: yaw 각도 값 (도 단위)
+        gallery: 갤러리 딕셔너리 (제공되면 Bank 추가 후 즉시 갱신)
     
     Returns:
-        추가 성공 여부 (True: 추가됨, False: 중복으로 스킵)
+        추가 성공 여부 (True: 추가됨, False: 중복/각도 제한으로 스킵)
     """
     import json
     
     # 사람별 폴더 경로
     person_dir = emb_dir / person_id
-    bank_path = person_dir / "bank.npy"
-    angles_path = person_dir / "angles.json"  # 각도 정보 저장 파일
+    bank_base_path = person_dir / "bank_base.npy"  # Base bank (보호)
+    bank_dynamic_path = person_dir / "bank_dynamic.npy"  # Dynamic bank (추가 저장)
+    bank_legacy_path = person_dir / "bank.npy"  # Legacy 호환
+    angles_path = person_dir / "angles_dynamic.json"  # 동적 각도 정보 저장 파일
     
-    # 기존 bank 로드
-    if bank_path.exists():
-        bank = np.load(bank_path)
+    # Base bank 로드 (참조용, 수정하지 않음)
+    base_bank = None
+    if bank_base_path.exists():
+        base_bank = np.load(bank_base_path)
+    elif bank_legacy_path.exists():
+        # Legacy bank가 있으면 base로 간주 (읽기 전용)
+        base_bank = np.load(bank_legacy_path)
+    
+    # Dynamic bank 로드 (없으면 새로 생성)
+    if bank_dynamic_path.exists():
+        dynamic_bank = np.load(bank_dynamic_path)
     else:
-        bank = np.empty((0, 512), dtype=np.float32)
+        dynamic_bank = np.empty((0, 512), dtype=np.float32)
     
-    # 기존 각도 정보 로드
+    # 기존 동적 각도 정보 로드
     if angles_path.exists():
         with open(angles_path, 'r', encoding='utf-8') as f:
             angles_info = json.load(f)
     else:
         angles_info = {"angle_types": [], "yaw_angles": []}
     
-    # 중복 체크
-    if bank.shape[0] > 0:
-        max_sim = float(np.max(bank @ embedding))
+    # 각도 타입이 없으면 스킵
+    if not angle_type or angle_type == "unknown":
+        if verbose:
+            print(f"     ⏭ Bank 스킵 (각도 정보 없음)")
+        return False
+    
+    # 수집 완료 여부 확인 (이미 완료되었으면 추가 수집 중단)
+    collection_status_path = person_dir / "collection_status.json"
+    if collection_status_path.exists():
+        with open(collection_status_path, 'r', encoding='utf-8') as f:
+            collection_status = json.load(f)
+            if collection_status.get("is_completed", False):
+                if verbose:
+                    print(f"     ⏭ Bank 스킵 (수집 완료: {person_id}, 모든 필수 각도 수집됨)")
+                return False
+    
+    # 각도별 다양성 체크
+    collected_angles = angles_info.get("angle_types", [])
+    if not is_diverse_angle(collected_angles, angle_type):
+        if verbose:
+            print(f"     ⏭ Bank 스킵 (각도 제한: {angle_type}, 이미 수집된 각도: {collected_angles})")
+        return False
+    
+    # 중복 체크 (Base + Dynamic 모두 확인)
+    all_banks = []
+    if base_bank is not None and base_bank.shape[0] > 0:
+        all_banks.append(base_bank)
+    if dynamic_bank.shape[0] > 0:
+        all_banks.append(dynamic_bank)
+    
+    if all_banks:
+        combined_bank = np.vstack(all_banks)
+        max_sim = float(np.max(combined_bank @ embedding))
         if max_sim >= similarity_threshold:
             if verbose:
                 print(f"     ⏭ Bank 스킵 (중복: {max_sim:.3f} >= {similarity_threshold})")
-            return False  # 중복으로 스킵
+            return False
     
-    # Bank에 추가
+    # Dynamic Bank에 추가
     new_emb = embedding.reshape(1, -1)  # (1, 512)
-    updated_bank = np.vstack([bank, new_emb])
+    updated_dynamic_bank = np.vstack([dynamic_bank, new_emb])
     
     # 각도 정보 추가
-    angles_info["angle_types"].append(angle_type if angle_type else "unknown")
+    angles_info["angle_types"].append(angle_type)
     angles_info["yaw_angles"].append(float(yaw_angle) if yaw_angle is not None else 0.0)
     
-    # Centroid 재계산
-    updated_centroid = updated_bank.mean(axis=0)
-    updated_centroid = l2_normalize(updated_centroid)
+    # 수집 완료 여부 확인
+    updated_collected_angles = angles_info.get("angle_types", [])
+    is_completed = is_all_angles_collected(updated_collected_angles)
     
-    # 저장
+    # 수집 완료 상태 저장
+    collection_status_path = person_dir / "collection_status.json"
+    collection_status = {
+        "is_completed": is_completed,
+        "completed_at": datetime.now().isoformat() if is_completed else None,
+        "collected_angles": updated_collected_angles,
+        "required_angles": ["front", "left", "right", "top"],
+        "completion_criteria": {
+            "min_front": 1,
+            "min_left": 1,
+            "min_right": 1,
+            "min_top": 1
+        }
+    }
+    
+    # Dynamic Centroid 재계산
+    updated_dynamic_centroid = updated_dynamic_bank.mean(axis=0)
+    updated_dynamic_centroid = l2_normalize(updated_dynamic_centroid)
+    
+    # 저장 (Base는 보호, Dynamic만 저장)
     person_dir.mkdir(parents=True, exist_ok=True)
-    np.save(bank_path, updated_bank)
-    centroid_path = person_dir / "centroid.npy"
-    np.save(centroid_path, updated_centroid)
+    np.save(bank_dynamic_path, updated_dynamic_bank)
+    centroid_dynamic_path = person_dir / "centroid_dynamic.npy"
+    np.save(centroid_dynamic_path, updated_dynamic_centroid)
     
     # 각도 정보 저장
     with open(angles_path, 'w', encoding='utf-8') as f:
         json.dump(angles_info, f, indent=2, ensure_ascii=False)
     
+    # 수집 완료 상태 저장
+    with open(collection_status_path, 'w', encoding='utf-8') as f:
+        json.dump(collection_status, f, indent=2, ensure_ascii=False)
+    
+    # 각도별 파일로 분리하여 저장 (정답 데이터와 동일한 구조)
+    save_angle_separated_banks(updated_dynamic_bank, angles_info, person_dir)
+    
+    # 메모리 캐시 갱신 (gallery가 제공된 경우)
+    if gallery is not None:
+        reload_person_in_gallery(person_id, emb_dir, gallery, use_bank=True)
+        if verbose:
+            print(f"     🔄 갤러리 캐시 갱신 완료: {person_id} (다음 프레임부터 즉시 반영)")
+    
     if verbose:
-        angle_info = f" [{angle_type}]" if angle_type else ""
-        print(f"     ✅ Bank 추가: {person_id} (총 {updated_bank.shape[0]}개 임베딩{angle_info})")
+        completion_msg = " [수집 완료!]" if is_completed else ""
+        print(f"     ✅ Dynamic Bank 추가: {person_id} [{angle_type}]{completion_msg} "
+              f"(동적: {updated_dynamic_bank.shape[0]}개, "
+              f"기준: {base_bank.shape[0] if base_bank is not None else 0}개)")
+        if is_completed:
+            print(f"     🎉 모든 필수 각도 수집 완료: {person_id} "
+                  f"(front, left, right, top 모두 수집됨)")
     
     return True  # 추가 성공
 
@@ -561,7 +743,7 @@ def main():
                 if r["similarity"] > max_sim_ever:
                     max_sim_ever = r["similarity"]
                 
-                # Bank에 자동 추가 (매칭 성공 시)
+                # Bank에 자동 추가 (매칭 성공 시, 각도별 다양성 체크 포함)
                 bank_added = False
                 if r["is_match"] and AUTO_ADD_TO_BANK:
                     bank_added = add_embedding_to_bank(
@@ -569,9 +751,10 @@ def main():
                         embedding=r["embedding"],
                         emb_dir=emb_dir,
                         similarity_threshold=BANK_DUPLICATE_THRESHOLD,
-                        verbose=False,
+                        verbose=True,  # 상세 출력 활성화
                         angle_type=r.get("angle_type"),
-                        yaw_angle=r.get("yaw_angle")
+                        yaw_angle=r.get("yaw_angle"),
+                        gallery=gallery  # 갤러리 캐시 즉시 갱신
                     )
                     if bank_added:
                         bank_added_count += 1
@@ -720,7 +903,7 @@ def main():
                         x1, y1, x2, y2, review_reason
                     ])
                     
-                    # Bank에 자동 추가 (매칭 성공 시)
+                    # Bank에 자동 추가 (매칭 성공 시, 각도별 다양성 체크 포함)
                     bank_added = False
                     if r["is_match"] and AUTO_ADD_TO_BANK:
                         bank_added = add_embedding_to_bank(
@@ -728,9 +911,10 @@ def main():
                             embedding=r["embedding"],
                             emb_dir=emb_dir,
                             similarity_threshold=BANK_DUPLICATE_THRESHOLD,
-                            verbose=False,
+                            verbose=True,  # 상세 출력 활성화
                             angle_type=r.get("angle_type"),
-                            yaw_angle=r.get("yaw_angle")
+                            yaw_angle=r.get("yaw_angle"),
+                            gallery=gallery  # 갤러리 캐시 즉시 갱신
                         )
                         if bank_added:
                             bank_added_count += 1

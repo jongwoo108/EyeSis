@@ -1,0 +1,75 @@
+{
+  "danielle": {
+    "person_id": "danielle",
+    "embeddings": {}
+  },
+  "hani": {
+    "person_id": "hani",
+    "embeddings": {}
+  },
+  "harin": {
+    "person_id": "harin",
+    "embeddings": {}
+  },
+  "hong": {
+    "person_id": "hong",
+    "embeddings": {}
+  },
+  "hyein": {
+    "person_id": "hyein",
+    "embeddings": {}
+  },
+  "ja": {
+    "person_id": "ja",
+    "embeddings": {
+      "left": {
+        "file": "outputs\\embeddings_manual\\ja\\embedding_left.npy",
+        "count": 1,
+        "centroid_norm": 1.0
+      },
+      "right": {
+        "file": "outputs\\embeddings_manual\\ja\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0
+      }
+    }
+  },
+  "js": {
+    "person_id": "js",
+    "embeddings": {}
+  },
+  "jw": {
+    "person_id": "jw",
+    "embeddings": {
+      "right": {
+        "file": "outputs\\embeddings_manual\\jw\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0
+      }
+    }
+  },
+  "minji": {
+    "person_id": "minji",
+    "embeddings": {}
+  },
+  "yh": {
+    "person_id": "yh",
+    "embeddings": {
+      "right": {
+        "file": "outputs\\embeddings_manual\\yh\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0
+      }
+    }
+  },
+  "yujin": {
+    "person_id": "yujin",
+    "embeddings": {
+      "front": {
+        "file": "outputs\\embeddings_manual\\yujin\\embedding_front.npy",
+        "count": 1,
+        "centroid_norm": 1.0
+      }
+    }
+  }
+}

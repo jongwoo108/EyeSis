@@ -55,7 +55,25 @@ const UI = {
     detectionFilter: document.getElementById('detectionFilter'),
     detectionInfo: document.getElementById('detectionInfo'),
     selectedSuspectName: document.getElementById('selectedSuspectName'),
-    selectedSuspectInfo: document.getElementById('selectedSuspectInfo')
+    selectedSuspectInfo: document.getElementById('selectedSuspectInfo'),
+    // 용의자 추가 모달
+    addSuspectModal: document.getElementById('addSuspectModal'),
+    addSuspectBtn: document.getElementById('addSuspectBtn'),
+    closeAddSuspectModal: document.getElementById('closeAddSuspectModal'),
+    addSuspectForm: document.getElementById('addSuspectForm'),
+    enrollPersonId: document.getElementById('enrollPersonId'),
+    enrollName: document.getElementById('enrollName'),
+    enrollImage: document.getElementById('enrollImage'),
+    enrollIsCriminal: document.getElementById('enrollIsCriminal'),
+    imagePreview: document.getElementById('imagePreview'),
+    previewImg: document.getElementById('previewImg'),
+    imagePlaceholder: document.getElementById('imagePlaceholder'),
+    enrollError: document.getElementById('enrollError'),
+    enrollSuccess: document.getElementById('enrollSuccess'),
+    submitEnrollBtn: document.getElementById('submitEnrollBtn'),
+    cancelEnrollBtn: document.getElementById('cancelEnrollBtn'),
+    // 프레임 추출
+    extractFramesBtn: document.getElementById('extractFramesBtn')
 };
 
 // ==========================================
@@ -102,6 +120,12 @@ function createSuspectCard(person) {
     card.setAttribute('data-suspect-id', person.id);
     card.setAttribute('data-is-thief', isCriminal.toString());
 
+    // 이미지 URL이 있으면 사용, 없으면 기본 이모지
+    const imageUrl = person.image_url || null;
+    const imageHtml = imageUrl 
+        ? `<img src="${imageUrl}" alt="${displayName}" class="w-full h-full object-cover" onerror="this.parentElement.innerHTML='<span class=\\'text-6xl\\'>👤</span>'">`
+        : `<span class="text-6xl">👤</span>`;
+
     // 체크박스 아이콘 추가
     card.innerHTML = `
         <div class="absolute top-2 right-2 w-6 h-6 rounded-full border-2 border-gray-300 bg-white flex items-center justify-center checkmark hidden">
@@ -109,8 +133,8 @@ function createSuspectCard(person) {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
             </svg>
         </div>
-        <div class="aspect-w-3 aspect-h-4 ${bgColor} flex items-center justify-center p-8">
-            <span class="text-6xl">👤</span>
+        <div class="aspect-w-3 aspect-h-4 ${bgColor} flex items-center justify-center p-8 overflow-hidden">
+            ${imageHtml}
         </div>
         <div class="p-4">
             <h3 class="font-bold text-lg">${displayName}</h3>
@@ -1363,6 +1387,160 @@ UI.analyzeBtn.addEventListener('click', async () => {
 
 // 인물 카드 클릭 이벤트는 createSuspectCard 함수 내에서 처리됨
 
+// ==========================================
+// 용의자 추가 기능
+// ==========================================
+
+// 모달 열기
+UI.addSuspectBtn?.addEventListener('click', () => {
+    // 폼 완전 초기화
+    UI.addSuspectForm.reset();
+    UI.imagePreview.classList.add('hidden');
+    UI.imagePlaceholder.classList.remove('hidden');
+    UI.enrollError.classList.add('hidden');
+    UI.enrollSuccess.classList.add('hidden');
+    // 버튼 상태 초기화
+    UI.submitEnrollBtn.disabled = false;
+    UI.submitEnrollBtn.textContent = '등록';
+    // 모달 표시
+    UI.addSuspectModal.classList.remove('hidden');
+});
+
+// 모달 외부 클릭 시 닫기
+UI.addSuspectModal?.addEventListener('click', (e) => {
+    if (e.target === UI.addSuspectModal) {
+        closeEnrollModal();
+    }
+});
+
+// ESC 키로 모달 닫기
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !UI.addSuspectModal.classList.contains('hidden')) {
+        closeEnrollModal();
+    }
+});
+
+// 모달 닫기 함수 (공통)
+function closeEnrollModal() {
+    UI.addSuspectModal.classList.add('hidden');
+    // 폼 완전 초기화
+    UI.addSuspectForm.reset();
+    UI.imagePreview.classList.add('hidden');
+    UI.imagePlaceholder.classList.remove('hidden');
+    UI.enrollError.classList.add('hidden');
+    UI.enrollSuccess.classList.add('hidden');
+}
+
+// 모달 닫기
+UI.closeAddSuspectModal?.addEventListener('click', () => {
+    closeEnrollModal();
+});
+
+UI.cancelEnrollBtn?.addEventListener('click', () => {
+    closeEnrollModal();
+});
+
+// 이미지 미리보기
+UI.enrollImage?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            UI.previewImg.src = event.target.result;
+            UI.imagePreview.classList.remove('hidden');
+            UI.imagePlaceholder.classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+// 폼 제출
+UI.addSuspectForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const personId = UI.enrollPersonId.value.trim();
+    const name = UI.enrollName.value.trim();
+    const isCriminal = UI.enrollIsCriminal.checked;
+    const imageFile = UI.enrollImage.files[0];
+    
+    // 유효성 검사
+    if (!personId || !name || !imageFile) {
+        UI.enrollError.textContent = '모든 필드를 입력해주세요.';
+        UI.enrollError.classList.remove('hidden');
+        UI.enrollSuccess.classList.add('hidden');
+        return;
+    }
+    
+    // person_id 유효성 검사 (영문, 숫자, 언더스코어만)
+    if (!/^[a-zA-Z0-9_]+$/.test(personId)) {
+        UI.enrollError.textContent = '인물 ID는 영문, 숫자, 언더스코어(_)만 사용 가능합니다.';
+        UI.enrollError.classList.remove('hidden');
+        UI.enrollSuccess.classList.add('hidden');
+        return;
+    }
+    
+    // FormData 생성
+    const formData = new FormData();
+    formData.append('person_id', personId);
+    formData.append('name', name);
+    formData.append('is_criminal', isCriminal);
+    formData.append('image', imageFile);
+    
+    // 버튼 비활성화
+    UI.submitEnrollBtn.disabled = true;
+    UI.submitEnrollBtn.textContent = '등록 중...';
+    UI.enrollError.classList.add('hidden');
+    UI.enrollSuccess.classList.add('hidden');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/enroll`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            // 성공 메시지 표시
+            UI.enrollSuccess.textContent = data.message || `등록 완료: ${name} (${personId})`;
+            UI.enrollSuccess.classList.remove('hidden');
+            UI.enrollError.classList.add('hidden');
+            
+            // 폼 리셋
+            UI.addSuspectForm.reset();
+            UI.imagePreview.classList.add('hidden');
+            UI.imagePlaceholder.classList.remove('hidden');
+            
+            // 인물 목록 즉시 새로고침
+            await renderSuspectCards();
+            
+            // 2초 후 모달 닫기
+            setTimeout(() => {
+                UI.addSuspectModal.classList.add('hidden');
+                // 모달 닫을 때 폼 완전 초기화
+                UI.addSuspectForm.reset();
+                UI.imagePreview.classList.add('hidden');
+                UI.imagePlaceholder.classList.remove('hidden');
+                UI.enrollError.classList.add('hidden');
+                UI.enrollSuccess.classList.add('hidden');
+            }, 2000);
+        } else {
+            // 에러 메시지 표시
+            UI.enrollError.textContent = data.message || data.error || '등록에 실패했습니다.';
+            UI.enrollError.classList.remove('hidden');
+            UI.enrollSuccess.classList.add('hidden');
+        }
+    } catch (error) {
+        console.error('등록 실패:', error);
+        UI.enrollError.textContent = `등록 중 오류가 발생했습니다: ${error.message}`;
+        UI.enrollError.classList.remove('hidden');
+    } finally {
+        // 버튼 활성화
+        UI.submitEnrollBtn.disabled = false;
+        UI.submitEnrollBtn.textContent = '등록';
+    }
+});
+
 UI.proceedBtn.addEventListener('click', () => {
     if (state.selectedSuspects.length > 0) {
         // 화면 전환: 용의자 선택 화면 → 대시보드 화면
@@ -1395,6 +1573,11 @@ UI.proceedBtn.addEventListener('click', () => {
 
         // 동영상 재생 시작
         UI.video.play();
+        
+        // 프레임 추출 버튼 활성화
+        if (UI.extractFramesBtn) {
+            UI.extractFramesBtn.disabled = false;
+        }
 
         initCaptureCanvas();
 
@@ -1403,6 +1586,65 @@ UI.proceedBtn.addEventListener('click', () => {
             connectWebSocket();
             // 연결 완료 및 설정 완료 후 첫 프레임 전송 (onopen과 config_updated에서 처리)
         }
+    }
+});
+
+// 프레임 추출 기능
+UI.extractFramesBtn?.addEventListener('click', async () => {
+    if (!state.selectedFile) {
+        alert('비디오 파일이 선택되지 않았습니다.');
+        return;
+    }
+    
+    // 확인 대화상자
+    const confirmExtract = confirm(
+        '모든 프레임을 추출하시겠습니까?\n\n' +
+        '이 작업은 시간이 걸릴 수 있으며, 많은 프레임이 생성될 수 있습니다.'
+    );
+    
+    if (!confirmExtract) {
+        return;
+    }
+    
+    // 버튼 비활성화 및 상태 변경
+    UI.extractFramesBtn.disabled = true;
+    UI.extractFramesBtn.textContent = '추출 중...';
+    
+    try {
+        // FormData 생성
+        const formData = new FormData();
+        formData.append('video', state.selectedFile);
+        
+        // 서버로 요청
+        const response = await fetch(`${API_BASE_URL}/extract_frames`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `서버 오류: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(
+                `프레임 추출 완료!\n\n` +
+                `총 프레임 수: ${result.total_frames}개\n` +
+                `저장 위치: ${result.output_dir}\n\n` +
+                `라벨링을 위해 프레임들을 확인하세요.`
+            );
+        } else {
+            throw new Error(result.message || '프레임 추출 실패');
+        }
+    } catch (error) {
+        console.error('프레임 추출 실패:', error);
+        alert(`프레임 추출 중 오류가 발생했습니다:\n${error.message}`);
+    } finally {
+        // 버튼 활성화 및 상태 복원
+        UI.extractFramesBtn.disabled = false;
+        UI.extractFramesBtn.textContent = '프레임 추출';
     }
 });
 

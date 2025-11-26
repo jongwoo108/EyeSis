@@ -1,0 +1,22 @@
+{
+  "frame_idx": 117,
+  "timestamp": 3.9,
+  "faces": [
+    {
+      "bbox": [
+        914,
+        417,
+        1230,
+        785
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 94,
+      "color": "red",
+      "angle_type": "front",
+      "yaw_angle": 3.33450731087008,
+      "bank_type": "masked"
+    }
+  ]
+}

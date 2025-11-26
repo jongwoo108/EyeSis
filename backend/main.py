@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Set
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import json
@@ -18,6 +19,7 @@ import asyncio
 import subprocess
 import tempfile
 import os
+import time
 
 import sys
 
@@ -32,8 +34,9 @@ _ensure_cuda_in_path()
 from insightface.app import FaceAnalysis
 from src.utils.device_config import get_device_id, safe_prepare_insightface
 from src.utils.gallery_loader import load_gallery, match_with_bank, match_with_bank_detailed
-from src.utils.face_angle_detector import estimate_face_angle
+from src.utils.face_angle_detector import estimate_face_angle, is_diverse_angle, is_all_angles_collected
 from src.utils.mask_detector import estimate_mask_from_similarity, get_adjusted_threshold, estimate_face_quality
+from src.face_enroll import get_main_face_embedding, save_embeddings, l2_normalize
 
 # PostgreSQL 데이터베이스 모듈
 from backend.database import (
@@ -94,16 +97,18 @@ persons_cache: List[Dict] = []
 # base(마스크 없음) / masked(마스크 얼굴)를 분리해서 관리
 gallery_base_cache: Dict[str, np.ndarray] = {}  # base bank (정면, 측면, 마스크 없는 얼굴)
 gallery_masked_cache: Dict[str, np.ndarray] = {}  # masked bank (마스크 쓴 얼굴)
+gallery_dynamic_cache: Dict[str, np.ndarray] = {}  # dynamic bank (CCTV에서 수집한 다양한 각도 임베딩 - 인식용)
 
 def load_persons_from_db(db: Session):
-    """PostgreSQL에서 인물 정보 로드 및 캐시 (Bank 데이터 포함 - base/masked 분리)"""
-    global persons_cache, gallery_base_cache, gallery_masked_cache
+    """PostgreSQL에서 인물 정보 로드 및 캐시 (Bank 데이터 포함 - base/masked/dynamic 분리)"""
+    global persons_cache, gallery_base_cache, gallery_masked_cache, gallery_dynamic_cache
     
     persons = get_all_persons(db)
     
     persons_cache = []
     gallery_base_cache = {}
     gallery_masked_cache = {}
+    gallery_dynamic_cache = {}
     
     for person in persons:
         person_id = person.person_id
@@ -112,17 +117,19 @@ def load_persons_from_db(db: Session):
         person_dir = EMBEDDINGS_DIR / person_id
         base_bank_path = person_dir / "bank_base.npy"
         masked_bank_path = person_dir / "bank_masked.npy"
+        dynamic_bank_path = person_dir / "bank_dynamic.npy"  # 동적 bank (인식용)
         centroid_path = person_dir / "centroid.npy"
         
-        # Backward compatibility: 기존 bank.npy, centroid.npy
-        legacy_bank_path = person_dir / "bank.npy"
-        legacy_centroid_path = person_dir / "centroid.npy"
+        # 레거시 파일 경로 (참고용, 사용하지 않음)
+        # legacy_bank_path = person_dir / "bank.npy"
+        # legacy_centroid_path = person_dir / "centroid.npy"
         
         base_bank = None
         masked_bank = None
+        dynamic_bank = None
         
-        # ===== Base Bank 로딩 (우선순위 순) =====
-        # 1. bank_base.npy (새 구조)
+        # ===== Base Bank 로딩 (새 구조만 사용, 레거시 파일 사용 안 함) =====
+        # 1. bank_base.npy (새 구조) - 필수
         if base_bank_path.exists():
             try:
                 base_bank = np.load(base_bank_path)
@@ -134,33 +141,13 @@ def load_persons_from_db(db: Session):
                 print(f"  ⚠️ Base Bank 로드 실패 ({person_id}): {e}")
                 base_bank = None
         
-        # 2. 기존 bank.npy (backward compatibility - read-only로 사용)
-        if base_bank is None and legacy_bank_path.exists():
-            try:
-                base_bank = np.load(legacy_bank_path)
-                if base_bank.ndim == 1:
-                    base_bank = base_bank.reshape(1, -1)
-                base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
-            except Exception as e:
-                print(f"  ⚠️ Legacy Bank 로드 실패 ({person_id}): {e}")
-                base_bank = None
-        
-        # 3. 기존 centroid.npy (backward compatibility)
-        if base_bank is None and legacy_centroid_path.exists():
-            try:
-                centroid_data = np.load(legacy_centroid_path)
-                centroid_data = l2_normalize(centroid_data)
-                base_bank = centroid_data.reshape(1, -1)
-            except Exception as e:
-                print(f"  ⚠️ Legacy Centroid 로드 실패 ({person_id}): {e}")
-                base_bank = None
-        
-        # 4. DB 임베딩 사용
+        # 2. DB 임베딩 사용 (fallback)
         if base_bank is None:
             try:
                 db_embedding = person.get_embedding()
                 db_embedding = l2_normalize(db_embedding)
                 base_bank = db_embedding.reshape(1, -1)
+                print(f"  ℹ️ DB 임베딩을 Base Bank로 사용: {person_id}")
             except Exception as e:
                 print(f"  ⚠️ DB 임베딩 로드 실패 ({person_id}): {e}")
                 base_bank = None
@@ -188,10 +175,30 @@ def load_persons_from_db(db: Session):
             # Masked Bank가 없으면 None (빈 상태)
             masked_bank = None
         
-        # gallery_base_cache와 gallery_masked_cache에 저장
+        # ===== Dynamic Bank 로딩 (인식용) =====
+        if dynamic_bank_path.exists():
+            try:
+                dynamic_bank = np.load(dynamic_bank_path)
+                if dynamic_bank.ndim == 1:
+                    dynamic_bank = dynamic_bank.reshape(1, -1)
+                if dynamic_bank.shape[0] > 0:
+                    # L2 정규화
+                    dynamic_bank = dynamic_bank / (np.linalg.norm(dynamic_bank, axis=1, keepdims=True) + 1e-6)
+                else:
+                    dynamic_bank = None
+            except Exception as e:
+                print(f"  ⚠️ Dynamic Bank 로드 실패 ({person_id}): {e}")
+                dynamic_bank = None
+        else:
+            # Dynamic Bank가 없으면 None (빈 상태)
+            dynamic_bank = None
+        
+        # gallery_base_cache, gallery_masked_cache, gallery_dynamic_cache에 저장
         gallery_base_cache[person_id] = base_bank
         if masked_bank is not None:
             gallery_masked_cache[person_id] = masked_bank
+        if dynamic_bank is not None:
+            gallery_dynamic_cache[person_id] = dynamic_bank
         
         # persons_cache에는 base의 첫 번째 임베딩 사용 (표시용)
         first_embedding = base_bank[0] if base_bank.ndim == 2 else base_bank.flatten()
@@ -207,14 +214,16 @@ def load_persons_from_db(db: Session):
         
         # 로드 결과 출력
         masked_count = masked_bank.shape[0] if masked_bank is not None else 0
+        dynamic_count = dynamic_bank.shape[0] if dynamic_bank is not None else 0
         masked_file_path = str(masked_bank_path.relative_to(PROJECT_ROOT)) if masked_bank_path.exists() else "없음"
-        print(f"  ✅ Bank 로드: {person.name} (ID: {person_id}, base: {base_bank.shape[0]}개, masked: {masked_count}개) [masked 파일: {masked_file_path}]")
+        dynamic_file_path = str(dynamic_bank_path.relative_to(PROJECT_ROOT)) if dynamic_bank_path.exists() else "없음"
+        print(f"  ✅ Bank 로드: {person.name} (ID: {person_id}, base: {base_bank.shape[0]}개, masked: {masked_count}개, dynamic: {dynamic_count}개)")
     
-    print(f"📂 데이터베이스 로딩 완료 ({len(persons_cache)}명, Base/Masked Bank 분리 구조)\n")
+    print(f"📂 데이터베이스 로딩 완료 ({len(persons_cache)}명, Base/Masked/Dynamic Bank 분리 구조)\n")
 
 def load_persons_from_embeddings():
-    """outputs/embeddings에서 gallery 로드 (fallback - base/masked 분리 구조)"""
-    global gallery_base_cache, gallery_masked_cache, persons_cache
+    """outputs/embeddings에서 gallery 로드 (fallback - base/masked/dynamic 분리 구조)"""
+    global gallery_base_cache, gallery_masked_cache, gallery_dynamic_cache, persons_cache
     
     if not EMBEDDINGS_DIR.exists():
         print(f"⚠️ embeddings 폴더를 찾을 수 없습니다: {EMBEDDINGS_DIR}")
@@ -223,6 +232,7 @@ def load_persons_from_embeddings():
     try:
         gallery_base_cache = {}
         gallery_masked_cache = {}
+        gallery_dynamic_cache = {}
         persons_cache = []
         
         # 사람별 폴더 구조 확인
@@ -233,13 +243,16 @@ def load_persons_from_embeddings():
             
             base_bank_path = person_dir / "bank_base.npy"
             masked_bank_path = person_dir / "bank_masked.npy"
-            legacy_bank_path = person_dir / "bank.npy"
-            legacy_centroid_path = person_dir / "centroid.npy"
+            dynamic_bank_path = person_dir / "bank_dynamic.npy"  # 동적 bank (인식용)
+            # 레거시 파일 경로 (참고용, 사용하지 않음)
+            # legacy_bank_path = person_dir / "bank.npy"
+            # legacy_centroid_path = person_dir / "centroid.npy"
             
             base_bank = None
             masked_bank = None
+            dynamic_bank = None
             
-            # Base Bank 로딩
+            # Base Bank 로딩 (새 구조만 사용, 레거시 파일 사용 안 함)
             if base_bank_path.exists():
                 try:
                     base_bank = np.load(base_bank_path)
@@ -248,29 +261,6 @@ def load_persons_from_embeddings():
                     base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
                 except Exception as e:
                     print(f"  ⚠️ Base Bank 로드 실패 ({person_id}): {e}")
-                    base_bank = None
-            
-            # Backward compatibility: 기존 bank.npy
-            if base_bank is None and legacy_bank_path.exists():
-                try:
-                    base_bank = np.load(legacy_bank_path)
-                    if base_bank.ndim == 1:
-                        base_bank = base_bank.reshape(1, -1)
-                    base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
-                    print(f"  ⚠️ Legacy Bank를 Base로 사용: {person_id}")
-                except Exception as e:
-                    print(f"  ⚠️ Legacy Bank 로드 실패 ({person_id}): {e}")
-                    base_bank = None
-            
-            # Backward compatibility: 기존 centroid.npy
-            if base_bank is None and legacy_centroid_path.exists():
-                try:
-                    centroid_data = np.load(legacy_centroid_path)
-                    centroid_data = l2_normalize(centroid_data)
-                    base_bank = centroid_data.reshape(1, -1)
-                    print(f"  ⚠️ Legacy Centroid를 Base로 사용: {person_id}")
-                except Exception as e:
-                    print(f"  ⚠️ Legacy Centroid 로드 실패 ({person_id}): {e}")
                     base_bank = None
             
             if base_bank is None:
@@ -290,10 +280,26 @@ def load_persons_from_embeddings():
                     print(f"  ⚠️ Masked Bank 로드 실패 ({person_id}): {e}")
                     masked_bank = None
             
-            # gallery_base_cache와 gallery_masked_cache에 저장
+            # Dynamic Bank 로딩 (인식용)
+            if dynamic_bank_path.exists():
+                try:
+                    dynamic_bank = np.load(dynamic_bank_path)
+                    if dynamic_bank.ndim == 1:
+                        dynamic_bank = dynamic_bank.reshape(1, -1)
+                    if dynamic_bank.shape[0] > 0:
+                        dynamic_bank = dynamic_bank / (np.linalg.norm(dynamic_bank, axis=1, keepdims=True) + 1e-6)
+                    else:
+                        dynamic_bank = None
+                except Exception as e:
+                    print(f"  ⚠️ Dynamic Bank 로드 실패 ({person_id}): {e}")
+                    dynamic_bank = None
+            
+            # gallery_base_cache, gallery_masked_cache, gallery_dynamic_cache에 저장
             gallery_base_cache[person_id] = base_bank
             if masked_bank is not None:
                 gallery_masked_cache[person_id] = masked_bank
+            if dynamic_bank is not None:
+                gallery_dynamic_cache[person_id] = dynamic_bank
             
             # persons_cache에 추가
             first_embedding = base_bank[0] if base_bank.ndim == 2 else base_bank.flatten()
@@ -305,11 +311,93 @@ def load_persons_from_embeddings():
                 "embedding": first_embedding
             })
             masked_count = masked_bank.shape[0] if masked_bank is not None else 0
-            print(f"  - {person_id} (base: {base_bank.shape[0]}개, masked: {masked_count}개)")
+            dynamic_count = dynamic_bank.shape[0] if dynamic_bank is not None else 0
+            print(f"  - {person_id} (base: {base_bank.shape[0]}개, masked: {masked_count}개, dynamic: {dynamic_count}개)")
         
-        print(f"📂 Gallery 로딩 완료 ({len(gallery_base_cache)}명, Base/Masked Bank 분리 구조)\n")
+        print(f"📂 Gallery 로딩 완료 ({len(gallery_base_cache)}명, Base/Masked/Dynamic Bank 분리 구조)\n")
     except Exception as e:
         print(f"⚠️ Gallery 로딩 실패: {e}\n")
+        import traceback
+        traceback.print_exc()
+
+# ==========================================
+# 레거시 파일 전용 로딩 함수 (독립적으로 사용 가능)
+# ==========================================
+
+def load_persons_from_legacy_files():
+    """
+    레거시 파일(bank.npy, centroid.npy)만 사용하여 갤러리 로드
+    새 구조 파일(bank_base.npy, bank_masked.npy)은 사용하지 않음 (독립적인 레거시 모드)
+    
+    사용 예시:
+        # 레거시 모드로 전환하려면 이 함수를 호출
+        load_persons_from_legacy_files()
+    """
+    global gallery_base_cache, gallery_masked_cache, persons_cache
+    
+    if not EMBEDDINGS_DIR.exists():
+        print(f"⚠️ embeddings 폴더를 찾을 수 없습니다: {EMBEDDINGS_DIR}")
+        return
+    
+    try:
+        gallery_base_cache = {}
+        gallery_masked_cache = {}
+        persons_cache = []
+        
+        person_dirs = [d for d in EMBEDDINGS_DIR.iterdir() if d.is_dir()]
+        
+        for person_dir in person_dirs:
+            person_id = person_dir.name
+            
+            legacy_bank_path = person_dir / "bank.npy"
+            legacy_centroid_path = person_dir / "centroid.npy"
+            
+            base_bank = None
+            
+            # 레거시 bank.npy 로딩
+            if legacy_bank_path.exists():
+                try:
+                    base_bank = np.load(legacy_bank_path)
+                    if base_bank.ndim == 1:
+                        base_bank = base_bank.reshape(1, -1)
+                    base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
+                    print(f"  ✅ Legacy Bank 로드: {person_id} ({base_bank.shape[0]}개 임베딩)")
+                except Exception as e:
+                    print(f"  ⚠️ Legacy Bank 로드 실패 ({person_id}): {e}")
+                    base_bank = None
+            
+            # 레거시 centroid.npy 로딩 (bank.npy가 없을 때만)
+            if base_bank is None and legacy_centroid_path.exists():
+                try:
+                    centroid_data = np.load(legacy_centroid_path)
+                    centroid_data = l2_normalize(centroid_data)
+                    base_bank = centroid_data.reshape(1, -1)
+                    print(f"  ✅ Legacy Centroid 로드: {person_id}")
+                except Exception as e:
+                    print(f"  ⚠️ Legacy Centroid 로드 실패 ({person_id}): {e}")
+                    base_bank = None
+            
+            if base_bank is None:
+                continue  # 레거시 파일이 없으면 스킵
+            
+            # gallery_base_cache에 저장 (레거시 파일을 base로 사용)
+            gallery_base_cache[person_id] = base_bank
+            
+            # persons_cache에 추가
+            first_embedding = base_bank[0] if base_bank.ndim == 2 else base_bank.flatten()
+            person_data = {
+                "id": person_id,
+                "name": person_id,  # 레거시 모드에서는 이름 정보 없음
+                "is_criminal": False,
+                "info": {},
+                "embedding": first_embedding
+            }
+            persons_cache.append(person_data)
+        
+        print(f"📂 레거시 파일 로딩 완료 ({len(persons_cache)}명, Legacy 모드)\n")
+        
+    except Exception as e:
+        print(f"❌ 레거시 파일 로딩 실패: {e}")
         import traceback
         traceback.print_exc()
 
@@ -562,6 +650,234 @@ def unregister_connection(websocket: WebSocket):
 # 6.5. Bank 자동 추가 함수
 # ==========================================
 
+def save_angle_separated_banks(dynamic_bank: np.ndarray, angles_info: dict, person_dir: Path):
+    """
+    동적 bank를 각도별로 분리하여 저장 (평가용 - 정답 데이터와 비교하기 위함)
+    
+    주의: 이 파일들은 인식에는 사용되지 않습니다. 평가 목적으로만 사용됩니다.
+    인식에는 bank_dynamic.npy (통합 파일)만 사용됩니다.
+    
+    정답 데이터 구조(embeddings_manual)와 동일하게 저장:
+    - bank_{angle_type}.npy: 해당 각도의 모든 임베딩 배열 (평가용)
+    - embedding_{angle_type}.npy: 해당 각도의 centroid(평균) 임베딩 (평가용)
+    
+    Args:
+        dynamic_bank: 동적 bank 배열 (N, 512)
+        angles_info: 각도 정보 딕셔너리 {"angle_types": [...], "yaw_angles": [...]}
+        person_dir: 사람별 폴더 경로
+    """
+    if dynamic_bank.shape[0] == 0:
+        return
+    
+    angle_types = angles_info.get("angle_types", [])
+    
+    # 각도별로 그룹화
+    angle_groups = {}
+    for i, angle_type in enumerate(angle_types):
+        if angle_type not in angle_groups:
+            angle_groups[angle_type] = []
+        angle_groups[angle_type].append(i)
+    
+    # 각도별 파일 저장
+    for angle_type, indices in angle_groups.items():
+        if not indices:
+            continue
+        
+        # 해당 각도의 임베딩 추출
+        angle_bank = dynamic_bank[indices]
+        
+        # 각도별 bank 파일 저장 (정답 데이터와 동일한 구조: bank_{angle_type}.npy)
+        angle_bank_path = person_dir / f"bank_{angle_type}.npy"
+        np.save(angle_bank_path, angle_bank)
+        
+        # 각도별 centroid 계산 및 저장 (정답 데이터와 동일한 구조: embedding_{angle_type}.npy)
+        angle_centroid = angle_bank.mean(axis=0)
+        angle_centroid = l2_normalize(angle_centroid)
+        angle_embedding_path = person_dir / f"embedding_{angle_type}.npy"
+        np.save(angle_embedding_path, angle_centroid)
+
+async def add_embedding_to_dynamic_bank_async(person_id: str, embedding: np.ndarray,
+                                               angle_type: str = None, yaw_angle: float = None,
+                                               similarity_threshold: float = 0.95, verbose: bool = False):
+    """
+    동적 Bank에 임베딩을 비동기로 추가 (각도별 다양성 체크 및 수집 완료 로직 포함)
+    
+    목적: 정면으로 식별된 인물에 대해 CCTV 영상에서 움직일 때 추가 각도 임베딩을 수집
+    - 기존 base 임베딩(bank_base.npy)은 보호
+    - 동적 임베딩은 bank_dynamic.npy에 별도 저장
+    
+    Args:
+        person_id: 인물 ID
+        embedding: 추가할 임베딩 (512차원, L2 정규화됨)
+        angle_type: 얼굴 각도 타입 (front, left, right, top 등)
+        yaw_angle: yaw 각도 값 (도 단위)
+        similarity_threshold: 중복 체크 임계값
+        verbose: 상세 출력 여부
+    
+    Returns:
+        추가 성공 여부 (True: 추가됨, False: 중복/각도 제한/수집 완료로 스킵)
+    """
+    import json
+    from datetime import datetime
+    
+    person_dir = EMBEDDINGS_DIR / person_id
+    bank_base_path = person_dir / "bank_base.npy"
+    bank_dynamic_path = person_dir / "bank_dynamic.npy"
+    bank_legacy_path = person_dir / "bank.npy"
+    angles_path = person_dir / "angles_dynamic.json"
+    collection_status_path = person_dir / "collection_status.json"
+    
+    # 수집 완료 여부 확인 (이미 완료되었으면 추가 수집 중단)
+    if collection_status_path.exists():
+        try:
+            with open(collection_status_path, 'r', encoding='utf-8') as f:
+                collection_status = json.load(f)
+                if collection_status.get("is_completed", False):
+                    if verbose:
+                        print(f"     ⏭ Dynamic Bank 스킵 (수집 완료: {person_id}, 모든 필수 각도 수집됨)")
+                    return False
+        except Exception as e:
+            if verbose:
+                print(f"     ⚠️ 수집 상태 파일 읽기 실패: {e}")
+    
+    # Base bank 로드 (참조용, 수정하지 않음)
+    base_bank = None
+    if bank_base_path.exists():
+        try:
+            base_bank = np.load(bank_base_path)
+            if base_bank.ndim == 1:
+                base_bank = base_bank.reshape(1, -1)
+        except Exception as e:
+            if verbose:
+                print(f"     ⚠️ Base Bank 로드 실패 ({person_id}): {e}")
+            base_bank = None
+    elif bank_legacy_path.exists():
+        try:
+            base_bank = np.load(bank_legacy_path)
+            if base_bank.ndim == 1:
+                base_bank = base_bank.reshape(1, -1)
+        except Exception as e:
+            if verbose:
+                print(f"     ⚠️ Legacy Bank 로드 실패 ({person_id}): {e}")
+            base_bank = None
+    
+    # Dynamic bank 로드 (없으면 새로 생성)
+    if bank_dynamic_path.exists():
+        try:
+            dynamic_bank = np.load(bank_dynamic_path)
+            if dynamic_bank.ndim == 1:
+                dynamic_bank = dynamic_bank.reshape(1, -1)
+        except Exception as e:
+            if verbose:
+                print(f"     ⚠️ Dynamic Bank 로드 실패 ({person_id}): {e}")
+            dynamic_bank = np.empty((0, 512), dtype=np.float32)
+    else:
+        dynamic_bank = np.empty((0, 512), dtype=np.float32)
+    
+    # 기존 동적 각도 정보 로드
+    if angles_path.exists():
+        try:
+            with open(angles_path, 'r', encoding='utf-8') as f:
+                angles_info = json.load(f)
+        except Exception as e:
+            if verbose:
+                print(f"     ⚠️ 각도 정보 로드 실패 ({person_id}): {e}")
+            angles_info = {"angle_types": [], "yaw_angles": []}
+    else:
+        angles_info = {"angle_types": [], "yaw_angles": []}
+    
+    # 각도 타입이 없으면 스킵
+    if not angle_type or angle_type == "unknown":
+        if verbose:
+            print(f"     ⏭ Dynamic Bank 스킵 (각도 정보 없음)")
+        return False
+    
+    # 각도별 다양성 체크
+    collected_angles = angles_info.get("angle_types", [])
+    if not is_diverse_angle(collected_angles, angle_type):
+        if verbose:
+            print(f"     ⏭ Dynamic Bank 스킵 (각도 제한: {angle_type}, 이미 수집된 각도: {collected_angles})")
+        return False
+    
+    # 중복 체크 (Base + Dynamic 모두 확인)
+    all_banks = []
+    if base_bank is not None and base_bank.shape[0] > 0:
+        all_banks.append(base_bank)
+    if dynamic_bank.shape[0] > 0:
+        all_banks.append(dynamic_bank)
+    
+    if all_banks:
+        combined_bank = np.vstack(all_banks)
+        max_sim = float(np.max(combined_bank @ embedding))
+        if max_sim >= similarity_threshold:
+            if verbose:
+                print(f"     ⏭ Dynamic Bank 스킵 (중복: {max_sim:.3f} >= {similarity_threshold})")
+            return False
+    
+    # Dynamic Bank에 추가
+    new_emb = embedding.reshape(1, -1)
+    updated_dynamic_bank = np.vstack([dynamic_bank, new_emb])
+    
+    # 각도 정보 추가
+    angles_info["angle_types"].append(angle_type)
+    angles_info["yaw_angles"].append(float(yaw_angle) if yaw_angle is not None else 0.0)
+    
+    # 수집 완료 여부 확인
+    updated_collected_angles = angles_info.get("angle_types", [])
+    is_completed = is_all_angles_collected(updated_collected_angles)
+    
+    # 수집 완료 상태 저장
+    collection_status = {
+        "is_completed": is_completed,
+        "completed_at": datetime.now().isoformat() if is_completed else None,
+        "collected_angles": updated_collected_angles,
+        "required_angles": ["front", "left", "right", "top"],
+        "completion_criteria": {
+            "min_front": 1,
+            "min_left": 1,
+            "min_right": 1,
+            "min_top": 1
+        }
+    }
+    
+    # Dynamic Centroid 재계산
+    updated_dynamic_centroid = updated_dynamic_bank.mean(axis=0)
+    updated_dynamic_centroid = l2_normalize(updated_dynamic_centroid)
+    
+    # 저장 (Base는 보호, Dynamic만 저장)
+    person_dir.mkdir(parents=True, exist_ok=True)
+    np.save(bank_dynamic_path, updated_dynamic_bank)
+    centroid_dynamic_path = person_dir / "centroid_dynamic.npy"
+    np.save(centroid_dynamic_path, updated_dynamic_centroid)
+    
+    # 각도 정보 저장
+    with open(angles_path, 'w', encoding='utf-8') as f:
+        json.dump(angles_info, f, indent=2, ensure_ascii=False)
+    
+    # 수집 완료 상태 저장
+    with open(collection_status_path, 'w', encoding='utf-8') as f:
+        json.dump(collection_status, f, indent=2, ensure_ascii=False)
+    
+    # 각도별 파일로 분리하여 저장 (정답 데이터와 동일한 구조 - 평가용)
+    save_angle_separated_banks(updated_dynamic_bank, angles_info, person_dir)
+    
+    # 메모리 캐시 즉시 갱신 (실시간 인식에 반영)
+    global gallery_dynamic_cache
+    updated_dynamic_bank_normalized = updated_dynamic_bank / (np.linalg.norm(updated_dynamic_bank, axis=1, keepdims=True) + 1e-6)
+    gallery_dynamic_cache[person_id] = updated_dynamic_bank_normalized
+    
+    if verbose:
+        completion_msg = " [수집 완료!]" if is_completed else ""
+        print(f"     ✅ Dynamic Bank 추가: {person_id} [{angle_type}]{completion_msg} "
+              f"(동적: {updated_dynamic_bank.shape[0]}개, "
+              f"기준: {base_bank.shape[0] if base_bank is not None else 0}개)")
+        print(f"     🔄 메모리 캐시 갱신 완료 (실시간 인식에 즉시 반영)")
+        if is_completed:
+            print(f"     🎉 모든 필수 각도 수집 완료: {person_id} "
+                  f"(front, left, right, top 모두 수집됨)")
+    
+    return True
+
 async def add_embedding_to_bank_async(person_id: str, embedding: np.ndarray, 
                                       angle_type: str = None, yaw_angle: float = None,
                                       bank_type: str = "base"):
@@ -597,10 +913,7 @@ async def add_embedding_to_bank_async(person_id: str, embedding: np.ndarray,
         target_bank_path = base_bank_path
         angles_path = person_dir / "angles_base.json"
     
-    # Backward compatibility: 기존 bank.npy를 base로 사용
-    legacy_bank_path = person_dir / "bank.npy"
-    
-    # Base Bank 로드 (중복 체크용, read-only)
+    # Base Bank 로드 (중복 체크용, read-only) - 새 구조만 사용
     base_bank = None
     if base_bank_path.exists():
         try:
@@ -609,16 +922,6 @@ async def add_embedding_to_bank_async(person_id: str, embedding: np.ndarray,
                 base_bank = base_bank.reshape(1, -1)
         except Exception as e:
             print(f"  ⚠️ Base Bank 로드 실패 ({person_id}): {e}")
-            base_bank = None
-    
-    # Backward compatibility: 기존 bank.npy를 base로 사용
-    if base_bank is None and legacy_bank_path.exists():
-        try:
-            base_bank = np.load(legacy_bank_path)
-            if base_bank.ndim == 1:
-                base_bank = base_bank.reshape(1, -1)
-        except Exception as e:
-            print(f"  ⚠️ Legacy Bank 로드 실패 ({person_id}): {e}")
             base_bank = None
     
     # Masked Bank 로드 (중복 체크용)
@@ -920,24 +1223,30 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         # 화질 추정
         face_quality = estimate_face_quality(box, (original_height, original_width))
         
-        # Base Bank와 Masked Bank 각각 매칭 (분리 계산)
+        # Base Bank, Masked Bank, Dynamic Bank 각각 매칭 (분리 계산)
         base_sim = 0.0
         masked_sim = 0.0
+        dynamic_sim = 0.0
         best_base_person_id = "unknown"
         best_mask_person_id = "unknown"
+        best_dynamic_person_id = "unknown"
         second_base_sim = -1.0
         second_mask_sim = -1.0
+        second_dynamic_sim = -1.0
         
         # suspect_ids가 지정된 경우: 선택된 용의자들만 검색 (전체 DB 검색 안 함)
         if suspect_ids:
-            # 선택된 용의자들만 포함한 base/masked 갤러리 생성
+            # 선택된 용의자들만 포함한 base/masked/dynamic 갤러리 생성
             target_base_gallery = {}
             target_masked_gallery = {}
+            target_dynamic_gallery = {}
             for sid in suspect_ids:
                 if sid in gallery_base_cache:
                     target_base_gallery[sid] = gallery_base_cache[sid]
                 if sid in gallery_masked_cache:
                     target_masked_gallery[sid] = gallery_masked_cache[sid]
+                if sid in gallery_dynamic_cache:
+                    target_dynamic_gallery[sid] = gallery_dynamic_cache[sid]
             
             # Base Bank 매칭
             if target_base_gallery:
@@ -946,6 +1255,10 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             # Masked Bank 매칭
             if target_masked_gallery:
                 best_mask_person_id, masked_sim, second_mask_sim = match_with_bank_detailed(embedding, target_masked_gallery)
+            
+            # Dynamic Bank 매칭 (인식용)
+            if target_dynamic_gallery:
+                best_dynamic_person_id, dynamic_sim, second_dynamic_sim = match_with_bank_detailed(embedding, target_dynamic_gallery)
         
         # 전체 DB 검색 (suspect_ids가 없는 경우에만 수행)
         else:
@@ -954,9 +1267,19 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             
             if gallery_masked_cache:
                 best_mask_person_id, masked_sim, second_mask_sim = match_with_bank_detailed(embedding, gallery_masked_cache)
+            
+            # Dynamic Bank 매칭 (인식용)
+            if gallery_dynamic_cache:
+                best_dynamic_person_id, dynamic_sim, second_dynamic_sim = match_with_bank_detailed(embedding, gallery_dynamic_cache)
         
-        # 두 결과 중 더 좋은 후보 선택 (best_sim)
-        if base_sim > masked_sim:
+        # 세 결과 중 더 좋은 후보 선택 (best_sim)
+        # Dynamic bank는 인식률 향상을 위해 우선순위가 높음 (다양한 각도 임베딩 포함)
+        if dynamic_sim >= max(base_sim, masked_sim):
+            best_person_id = best_dynamic_person_id
+            max_similarity = dynamic_sim
+            second_similarity = second_dynamic_sim if second_dynamic_sim > 0 else 0.0
+            bank_type = "dynamic"
+        elif base_sim > masked_sim:
             best_person_id = best_base_person_id
             max_similarity = base_sim
             second_similarity = second_base_sim if second_base_sim > 0 else 0.0
@@ -1321,6 +1644,23 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                     )
                 except Exception as e:
                     print(f"⚠️ 로그 저장 실패: {e}")
+            
+            # 동적 Bank 자동 추가 (매칭 성공 시) - 각도별 다양성 체크 및 수집 완료 로직 포함
+            # 목적: 정면으로 식별된 인물에 대해 CCTV 영상에서 움직일 때 추가 각도 임베딩을 수집
+            AUTO_ADD_TO_DYNAMIC_BANK = True
+            BANK_DUPLICATE_THRESHOLD = 0.95
+            
+            if AUTO_ADD_TO_DYNAMIC_BANK:
+                # 동적 bank에 추가 (각도별 다양성 체크 포함)
+                # 모든 각도(front, left, right, top) 수집 가능
+                learning_events.append({
+                    "person_id": person_id,
+                    "person_name": name,
+                    "angle_type": angle_type,
+                    "yaw_angle": yaw_angle,
+                    "embedding": embedding_normalized.tolist(),  # 파일 저장용
+                    "bank_type": "dynamic"  # 동적 bank로 저장
+                })
             
             # Bank 자동 추가 (매칭 성공 시) - base bank는 절대 자동 추가하지 않음
             # masked bank는 이미 bbox tracking 로직에서 처리됨
@@ -1693,14 +2033,27 @@ async def websocket_detect(websocket: WebSocket):
                         # 임베딩을 numpy 배열로 변환
                         embedding_array = np.array(event["embedding"], dtype=np.float32)
                         bank_type = event.get("bank_type", "base")
-                        # 파일 저장은 백그라운드에서 비동기 처리 (응답 지연 없음)
-                        asyncio.create_task(add_embedding_to_bank_async(
-                            event["person_id"],
-                            embedding_array,
-                            event.get("angle_type"),
-                            event.get("yaw_angle"),
-                            bank_type=bank_type
-                        ))
+                        
+                        # 동적 bank 저장 (각도별 다양성 체크 및 수집 완료 로직 포함)
+                        if bank_type == "dynamic":
+                            # 파일 저장은 백그라운드에서 비동기 처리 (응답 지연 없음)
+                            asyncio.create_task(add_embedding_to_dynamic_bank_async(
+                                event["person_id"],
+                                embedding_array,
+                                event.get("angle_type"),
+                                event.get("yaw_angle"),
+                                similarity_threshold=0.95,
+                                verbose=True
+                            ))
+                        else:
+                            # 기존 masked/base bank 저장 (호환성 유지)
+                            asyncio.create_task(add_embedding_to_bank_async(
+                                event["person_id"],
+                                embedding_array,
+                                event.get("angle_type"),
+                                event.get("yaw_angle"),
+                                bank_type=bank_type
+                            ))
                 
                 elif msg_type == "config":
                     # 설정 변경 (suspect_ids 등)
@@ -1793,6 +2146,25 @@ async def get_persons(db: Session = Depends(get_db)):
     
     print(f"🔍 [API /persons] 요청 받음 - persons_cache 길이: {len(persons_cache) if persons_cache else 0}")
     
+    # 이미지 경로 찾기 헬퍼 함수
+    def find_person_image(person_id: str) -> Optional[str]:
+        """인물의 등록 이미지 경로 찾기"""
+        enroll_dir = PROJECT_ROOT / "images" / "enroll" / person_id
+        if enroll_dir.exists():
+            # 지원하는 이미지 확장자
+            image_exts = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]
+            # person_id로 시작하는 파일 찾기
+            for ext in image_exts:
+                img_file = enroll_dir / f"{person_id}{ext}"
+                if img_file.exists():
+                    return f"/api/images/enroll/{person_id}/{img_file.name}"
+            # 또는 첫 번째 이미지 파일 찾기
+            for ext in image_exts:
+                for img_file in enroll_dir.glob(f"*{ext}"):
+                    if img_file.exists():
+                        return f"/api/images/enroll/{person_id}/{img_file.name}"
+        return None
+    
     # 캐시에서 반환 (성능 향상)
     if persons_cache and len(persons_cache) > 0:
         print(f"📋 [API] persons_cache에서 반환: {len(persons_cache)}명")
@@ -1804,7 +2176,8 @@ async def get_persons(db: Session = Depends(get_db)):
                     "id": p["id"],
                     "name": p["name"],
                     "is_criminal": p["is_criminal"],
-                    "info": p.get("info", {})
+                    "info": p.get("info", {}),
+                    "image_url": find_person_image(p["id"])  # 이미지 URL 추가
                 }
                 for p in persons_cache
             ]
@@ -1829,6 +2202,22 @@ async def get_persons(db: Session = Depends(get_db)):
                 import traceback
                 traceback.print_exc()
         
+        # 이미지 경로 찾기 헬퍼 함수 (중복 정의 방지)
+        def find_person_image_db(person_id: str) -> Optional[str]:
+            """인물의 등록 이미지 경로 찾기"""
+            enroll_dir = PROJECT_ROOT / "images" / "enroll" / person_id
+            if enroll_dir.exists():
+                image_exts = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]
+                for ext in image_exts:
+                    img_file = enroll_dir / f"{person_id}{ext}"
+                    if img_file.exists():
+                        return f"/api/images/enroll/{person_id}/{img_file.name}"
+                for ext in image_exts:
+                    for img_file in enroll_dir.glob(f"*{ext}"):
+                        if img_file.exists():
+                            return f"/api/images/enroll/{person_id}/{img_file.name}"
+            return None
+        
         result = {
             "success": True,
             "count": len(persons),
@@ -1837,7 +2226,8 @@ async def get_persons(db: Session = Depends(get_db)):
                     "id": p.person_id,
                     "name": p.name,
                     "is_criminal": p.is_criminal,
-                    "info": p.info or {}
+                    "info": p.info or {},
+                    "image_url": find_person_image_db(p.person_id)  # 이미지 URL 추가
                 }
                 for p in persons
             ]
@@ -1885,6 +2275,395 @@ async def get_logs(limit: int = 100, db: Session = Depends(get_db)):
             "count": 0,
             "logs": []
         }
+
+@app.post("/api/enroll")
+async def enroll_person(
+    person_id: str = Form(...),
+    name: str = Form(...),
+    is_criminal: bool = Form(False),
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    용의자 등록 API - 정면 사진에서 얼굴 임베딩 추출 및 저장
+    
+    Args:
+        person_id: 인물 고유 ID (예: "hong", "criminal")
+        name: 인물 이름
+        is_criminal: 범죄자 여부
+        image: 정면 사진 파일 (JPEG, PNG 등)
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "person_id": str,
+            "name": str,
+            "embedding_count": int
+        }
+    """
+    global persons_cache, gallery_base_cache, gallery_masked_cache
+    
+    try:
+        print(f"📝 [ENROLL] 용의자 등록 요청: person_id={person_id}, name={name}, is_criminal={is_criminal}")
+        
+        # 이미지 파일 읽기
+        image_bytes = await image.read()
+        
+        # 등록 이미지 저장 경로 (images/enroll/{person_id}/)
+        enroll_dir = PROJECT_ROOT / "images" / "enroll" / person_id
+        enroll_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 이미지 파일 확장자 결정
+        file_extension = Path(image.filename).suffix if image.filename else ".jpg"
+        if not file_extension or file_extension not in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+            file_extension = ".jpg"
+        
+        # 이미지 파일 저장 (person_id를 파일명으로 사용)
+        saved_image_path = enroll_dir / f"{person_id}{file_extension}"
+        with open(saved_image_path, "wb") as f:
+            f.write(image_bytes)
+        
+        print(f"  💾 이미지 저장: {saved_image_path}")
+        
+        # face_enroll.py의 함수를 사용하여 임베딩 추출
+        embedding_normalized = get_main_face_embedding(model, saved_image_path)
+        
+        if embedding_normalized is None:
+            # 이미지 파일 삭제 (얼굴 감지 실패 시)
+            if saved_image_path.exists():
+                saved_image_path.unlink()
+            raise HTTPException(status_code=400, detail="이미지에서 얼굴을 감지할 수 없습니다. 정면 사진을 업로드해주세요.")
+        
+        # Bank 저장 경로
+        person_dir = EMBEDDINGS_DIR / person_id
+        person_dir.mkdir(parents=True, exist_ok=True)
+        bank_base_path = person_dir / "bank_base.npy"
+        
+        # 기존 bank_base.npy 로드 (중복 체크용)
+        existing_bank = None
+        if bank_base_path.exists():
+            existing_bank = np.load(bank_base_path)
+            if existing_bank.ndim == 1:
+                existing_bank = existing_bank.reshape(1, -1)
+            
+            # 중복 체크 (유사도 0.95 이상이면 스킵)
+            BANK_DUPLICATE_THRESHOLD = 0.95
+            max_sim = float(np.max(existing_bank @ embedding_normalized))
+            if max_sim >= BANK_DUPLICATE_THRESHOLD:
+                return {
+                    "success": False,
+                    "message": f"이미 등록된 얼굴과 유사도가 너무 높습니다 (유사도: {max_sim:.3f}). 새로운 사진을 업로드해주세요.",
+                    "person_id": person_id,
+                    "name": name,
+                    "embedding_count": existing_bank.shape[0]
+                }
+        
+        # 기존 person 확인
+        existing_person = get_person_by_id(db, person_id)
+        
+        if existing_person:
+            # 기존 인물 업데이트
+            print(f"  🔄 기존 인물 업데이트: {person_id}")
+            
+            # Bank에 추가 (기존 bank가 있으면 추가, 없으면 새로 생성)
+            if existing_bank is not None:
+                updated_bank = np.vstack([existing_bank, embedding_normalized.reshape(1, -1)])
+            else:
+                updated_bank = embedding_normalized.reshape(1, -1)
+            
+            # bank_base.npy 저장
+            np.save(bank_base_path, updated_bank)
+            
+            # Centroid 재계산 및 저장
+            centroid = updated_bank.mean(axis=0)
+            centroid = l2_normalize(centroid)
+            centroid_base_path = person_dir / "centroid_base.npy"
+            np.save(centroid_base_path, centroid)
+            
+            # Backward compatibility: centroid.npy도 업데이트
+            legacy_centroid_path = person_dir / "centroid.npy"
+            np.save(legacy_centroid_path, centroid)
+            
+            # 데이터베이스 업데이트
+            existing_person.name = name
+            existing_person.is_criminal = is_criminal
+            existing_person.set_embedding(centroid)  # centroid를 대표 임베딩으로 사용
+            db.commit()
+            db.refresh(existing_person)
+            
+            embedding_count = updated_bank.shape[0]
+            print(f"  ✅ Bank 업데이트 완료: {person_id} (총 {embedding_count}개 임베딩)")
+        else:
+            # 새 인물 등록 - face_enroll.py의 save_embeddings 함수 사용
+            print(f"  ✨ 새 인물 등록: {person_id}")
+            
+            # face_enroll.py의 save_embeddings 함수 사용 (bank_base.npy와 centroid_base.npy 저장)
+            save_embeddings(person_id, [embedding_normalized], EMBEDDINGS_DIR, save_bank=True, save_centroid=True)
+            
+            # Centroid는 save_embeddings에서 이미 저장됨
+            centroid = embedding_normalized  # 단일 임베딩이므로 그대로 사용
+            
+            # 데이터베이스에 저장
+            from backend.database import create_person
+            create_person(db, person_id, name, centroid, is_criminal=is_criminal)
+            
+            embedding_count = 1
+            print(f"  ✅ 새 인물 등록 완료: {person_id}")
+        
+        # 캐시 갱신
+        try:
+            load_persons_from_db(db)
+            print(f"  ✅ 캐시 갱신 완료")
+        except Exception as cache_error:
+            print(f"  ⚠️ 캐시 갱신 실패: {cache_error}")
+        
+        return {
+            "success": True,
+            "message": f"{'업데이트' if existing_person else '등록'} 완료: {name} ({person_id})",
+            "person_id": person_id,
+            "name": name,
+            "embedding_count": embedding_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [ENROLL] 등록 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"등록 중 오류 발생: {str(e)}")
+
+@app.get("/api/images/enroll/{person_id}/{filename}")
+async def get_person_image(person_id: str, filename: str):
+    """등록된 인물의 이미지 제공"""
+    image_path = PROJECT_ROOT / "images" / "enroll" / person_id / filename
+    
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다.")
+    
+    # 보안 체크: person_id와 filename이 일치하는지 확인
+    if image_path.parent.name != person_id:
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+    
+    return FileResponse(image_path)
+
+@app.post("/api/extract_frames")
+async def extract_frames(
+    video: UploadFile = File(...)
+):
+    """
+    비디오 파일에서 모든 프레임을 추출하여 저장 (라벨링용)
+    
+    Args:
+        video: 비디오 파일
+    
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "total_frames": int,
+            "output_dir": str
+        }
+    """
+    try:
+        print(f"📹 [EXTRACT FRAMES] 프레임 추출 요청: {video.filename}")
+        
+        # 임시 파일로 비디오 저장
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as input_file:
+            input_path = input_file.name
+            content = await video.read()
+            input_file.write(content)
+        
+        # 출력 디렉토리 생성 (비디오 파일명 기반)
+        video_name = Path(video.filename).stem if video.filename else f"video_{int(time.time())}"
+        output_dir = PROJECT_ROOT / "outputs" / "extracted_frames" / video_name
+        annotations_dir = output_dir / "annotations"  # JSON 파일 저장 폴더
+        output_dir.mkdir(parents=True, exist_ok=True)
+        annotations_dir.mkdir(parents=True, exist_ok=True)
+        
+        # OpenCV로 비디오 열기
+        cap = cv2.VideoCapture(input_path)
+        
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="비디오 파일을 열 수 없습니다.")
+        
+        # 비디오 정보
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        print(f"  📊 비디오 정보:")
+        print(f"     - 총 프레임: {total_frames}")
+        print(f"     - FPS: {fps:.2f}")
+        print(f"     - 해상도: {width}x{height}")
+        print(f"     - 출력 디렉토리: {output_dir}")
+        print(f"  🔍 얼굴 감지 및 매칭 결과 박스 그리기 활성화")
+        
+        # DB 세션 생성 (매칭을 위해 필요)
+        from backend.database import SessionLocal
+        db = SessionLocal()
+        
+        try:
+            # 모든 프레임 추출 (매칭 결과 포함 박스 그리기)
+            frame_idx = 0
+            saved_count = 0
+            total_faces_detected = 0
+            total_matches = 0
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # 매칭 로직 실행 (브라우저에서 보는 것과 동일한 로직)
+                # tracking_state 초기화 (tracks 키 필요)
+                tracking_state = {"tracks": {}}
+                
+                detection_result = process_detection(
+                    frame=frame,
+                    suspect_ids=None,  # 전체 갤러리 검색
+                    db=db,
+                    tracking_state=tracking_state  # 프레임별로 독립적으로 처리
+                )
+                
+                # 박스가 그려진 프레임 복사
+                frame_with_boxes = frame.copy()
+                
+                # 매칭 결과에 따라 박스 그리기 및 JSON 데이터 수집
+                detections = detection_result.get("detections", [])
+                frame_annotations = {
+                    "frame_idx": frame_idx,
+                    "timestamp": frame_idx / fps if fps > 0 else 0.0,
+                    "faces": []
+                }
+                
+                for detection in detections:
+                    bbox = detection["bbox"]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    
+                    # 색상 결정 (브라우저와 동일한 로직)
+                    status = detection.get("status", "unknown")
+                    if status == "criminal":
+                        color = (0, 0, 255)  # 빨간색 (BGR)
+                        label_color = (0, 0, 255)
+                    elif status == "normal":
+                        color = (0, 255, 0)  # 초록색 (BGR)
+                        label_color = (0, 255, 0)
+                    else:  # unknown
+                        color = (0, 255, 255)  # 노란색 (BGR)
+                        label_color = (0, 255, 255)
+                    
+                    # 박스 그리기 (두께 3)
+                    cv2.rectangle(frame_with_boxes, (x1, y1), (x2, y2), color, 3)
+                    
+                    # 레이블 생성 (브라우저와 동일한 정보)
+                    name = detection.get("name", "Unknown")
+                    confidence = detection.get("confidence", 0)
+                    label = f"{name} ({confidence}%)"
+                    
+                    # 레이블 배경 (가독성 향상)
+                    (label_width, label_height), baseline = cv2.getTextSize(
+                        label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                    )
+                    cv2.rectangle(
+                        frame_with_boxes,
+                        (x1, y1 - label_height - 10),
+                        (x1 + label_width, y1),
+                        color,
+                        -1  # 채워진 사각형
+                    )
+                    
+                    # 레이블 텍스트 (흰색)
+                    cv2.putText(
+                        frame_with_boxes,
+                        label,
+                        (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 255),  # 흰색
+                        2
+                    )
+                    
+                    # JSON 어노테이션 데이터 수집
+                    face_annotation = {
+                        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                        "status": status,
+                        "name": name,
+                        "person_id": detection.get("person_id"),
+                        "confidence": confidence,
+                        "color": detection.get("color", "yellow"),
+                        "angle_type": detection.get("angle_type"),
+                        "yaw_angle": detection.get("yaw_angle"),
+                        "bank_type": detection.get("bank_type")
+                    }
+                    frame_annotations["faces"].append(face_annotation)
+                    
+                    total_faces_detected += 1
+                    if detection.get("status") != "unknown":
+                        total_matches += 1
+                
+                # 프레임 저장 (JPEG 형식, 매칭 결과 박스가 그려진 이미지)
+                frame_filename = f"frame_{frame_idx:06d}.jpg"
+                frame_path = output_dir / frame_filename
+                cv2.imwrite(str(frame_path), frame_with_boxes, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                
+                # JSON 어노테이션 저장 (이미지 파일과 쌍으로 저장)
+                json_filename = f"frame_{frame_idx:06d}.json"
+                json_path = annotations_dir / json_filename
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(frame_annotations, f, indent=2, ensure_ascii=False)
+                
+                saved_count += 1
+                
+                # 진행 상황 출력 (100프레임마다)
+                if frame_idx % 100 == 0:
+                    progress = (frame_idx / total_frames * 100) if total_frames > 0 else 0
+                    print(f"  ⏳ 진행 중: {frame_idx}/{total_frames} 프레임 ({progress:.1f}%), 감지된 얼굴: {total_faces_detected}개, 매칭: {total_matches}개")
+                
+                frame_idx += 1
+        finally:
+            db.close()
+        
+        cap.release()
+        
+        # 임시 파일 삭제
+        try:
+            os.unlink(input_path)
+        except:
+            pass
+        
+        print(f"  ✅ 프레임 추출 완료: {saved_count}개 프레임 저장됨")
+        print(f"  👤 총 감지된 얼굴: {total_faces_detected}개")
+        print(f"  ✅ 매칭 성공: {total_matches}개")
+        print(f"  📁 이미지 저장 위치: {output_dir}")
+        print(f"  📄 JSON 저장 위치: {annotations_dir}")
+        
+        return {
+            "success": True,
+            "message": f"{saved_count}개의 프레임이 추출되었습니다. (감지된 얼굴: {total_faces_detected}개, 매칭: {total_matches}개)",
+            "total_frames": saved_count,
+            "total_faces": total_faces_detected,
+            "total_matches": total_matches,
+            "output_dir": str(output_dir.relative_to(PROJECT_ROOT)),
+            "annotations_dir": str(annotations_dir.relative_to(PROJECT_ROOT)),
+            "video_info": {
+                "fps": fps,
+                "width": width,
+                "height": height,
+                "duration": total_frames / fps if fps > 0 else 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [EXTRACT FRAMES] 프레임 추출 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"프레임 추출 중 오류 발생: {str(e)}")
 
 @app.post("/api/extract_clip")
 async def extract_clip(

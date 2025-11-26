@@ -18,6 +18,7 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
 def load_gallery(emb_dir: Path, use_bank: bool = True) -> Dict[str, np.ndarray]:
     """
     임베딩 디렉토리에서 갤러리 로드 (사람별 폴더 구조 지원)
+    Base와 Dynamic bank를 모두 로드하여 통합 사용
     
     Args:
         emb_dir: 임베딩 파일들이 있는 디렉토리 (예: outputs/embeddings)
@@ -25,7 +26,7 @@ def load_gallery(emb_dir: Path, use_bank: bool = True) -> Dict[str, np.ndarray]:
     
     Returns:
         {person_id: embedding_array} 딕셔너리
-        - bank가 있으면: (N, 512) 2D 배열
+        - bank가 있으면: (N, 512) 2D 배열 (Base + Dynamic 통합)
         - 없으면: (512,) 1D 배열
     """
     emb_dir = Path(emb_dir)
@@ -40,21 +41,66 @@ def load_gallery(emb_dir: Path, use_bank: bool = True) -> Dict[str, np.ndarray]:
     for person_dir in person_dirs:
         person_id = person_dir.name
         
-        # 사람별 폴더에서 bank.npy 또는 centroid.npy 찾기
-        bank_path = person_dir / "bank.npy"
-        centroid_path = person_dir / "centroid.npy"
+        # Base와 Dynamic bank 경로
+        bank_base_path = person_dir / "bank_base.npy"
+        bank_dynamic_path = person_dir / "bank_dynamic.npy"
+        bank_legacy_path = person_dir / "bank.npy"  # Legacy 호환
+        centroid_base_path = person_dir / "centroid_base.npy"
+        centroid_dynamic_path = person_dir / "centroid_dynamic.npy"
+        centroid_path = person_dir / "centroid.npy"  # Legacy 호환
         
-        if use_bank and bank_path.exists():
-            # Bank 사용 (2D 배열: N x 512)
-            emb = np.load(bank_path)
-            if emb.ndim == 2:
-                emb = emb / (np.linalg.norm(emb, axis=1, keepdims=True) + 1e-6)
-            gallery[person_id] = emb
-        elif centroid_path.exists():
-            # Centroid 사용 (1D 배열: 512)
-            emb = np.load(centroid_path)
-            emb = l2_normalize(emb)
-            gallery[person_id] = emb
+        if use_bank:
+            # Base와 Dynamic bank 통합 로드
+            banks = []
+            
+            # Base bank 로드
+            if bank_base_path.exists():
+                base_bank = np.load(bank_base_path)
+                if base_bank.ndim == 2:
+                    base_bank = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
+                    banks.append(base_bank)
+            elif bank_legacy_path.exists():
+                # Legacy bank를 base로 간주
+                legacy_bank = np.load(bank_legacy_path)
+                if legacy_bank.ndim == 2:
+                    legacy_bank = legacy_bank / (np.linalg.norm(legacy_bank, axis=1, keepdims=True) + 1e-6)
+                    banks.append(legacy_bank)
+            
+            # Dynamic bank 로드
+            if bank_dynamic_path.exists():
+                dynamic_bank = np.load(bank_dynamic_path)
+                if dynamic_bank.ndim == 2 and dynamic_bank.shape[0] > 0:
+                    dynamic_bank = dynamic_bank / (np.linalg.norm(dynamic_bank, axis=1, keepdims=True) + 1e-6)
+                    banks.append(dynamic_bank)
+            
+            # Base와 Dynamic 통합
+            if banks:
+                combined_bank = np.vstack(banks)
+                gallery[person_id] = combined_bank
+                continue
+        
+        # Centroid 사용 (bank가 없을 때)
+        if centroid_base_path.exists() or centroid_dynamic_path.exists() or centroid_path.exists():
+            centroids = []
+            
+            # Base centroid
+            if centroid_base_path.exists():
+                base_centroid = np.load(centroid_base_path)
+                centroids.append(base_centroid)
+            elif centroid_path.exists():
+                legacy_centroid = np.load(centroid_path)
+                centroids.append(legacy_centroid)
+            
+            # Dynamic centroid (있으면 함께 사용)
+            if centroid_dynamic_path.exists():
+                dynamic_centroid = np.load(centroid_dynamic_path)
+                centroids.append(dynamic_centroid)
+            
+            # Centroid 평균 계산
+            if centroids:
+                combined_centroid = np.mean(np.stack(centroids), axis=0)
+                emb = l2_normalize(combined_centroid)
+                gallery[person_id] = emb
     
     # 방법 2: 루트에 있는 파일들 확인 (기존 구조 호환)
     npy_files = sorted(emb_dir.glob("*.npy"))

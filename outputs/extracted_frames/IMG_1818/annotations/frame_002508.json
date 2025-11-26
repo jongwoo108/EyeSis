@@ -1,0 +1,22 @@
+{
+  "frame_idx": 2508,
+  "timestamp": 83.60163090128755,
+  "faces": [
+    {
+      "bbox": [
+        795,
+        495,
+        916,
+        660
+      ],
+      "status": "normal",
+      "name": "jw",
+      "person_id": "jw",
+      "confidence": 82,
+      "color": "green",
+      "angle_type": "front",
+      "yaw_angle": -3.5568371966565624,
+      "bank_type": "base"
+    }
+  ]
+}

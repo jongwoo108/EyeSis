@@ -61,3 +61,7 @@ MASKED_CANDIDATE_MIN_FRAMES = 2  # 더 낮춤
 
 또는 수동으로 임베딩 저장 (빠른 테스트용)
 
+
+
+
+
