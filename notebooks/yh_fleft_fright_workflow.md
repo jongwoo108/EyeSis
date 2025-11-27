@@ -124,3 +124,4 @@ python scripts/extract_angle_embeddings.py
 - [ ] 결과 보고서 작성
 
 
+

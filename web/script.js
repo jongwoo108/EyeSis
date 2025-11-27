@@ -35,8 +35,23 @@ const state = {
     snapshots: [], // 범죄자 감지 스냅샷 배열
     nextSnapshotId: 1, // 스냅샷 ID 자동 증가
     // 영상 클립 관리
-    detectionClips: [], // 범죄자 감지 구간 배열 [{startTime, endTime, personId, personName, ...}]
-    currentClip: null // 현재 감지 중인 클립 (null이면 감지 중이 아님)
+    detectionClips: [], // 범죄자 감지 구간 배열 [{id, startTime, endTime, personId, personName, similarity, ...}]
+    activeClips: {}, // 현재 활성 클립 {personId: {id, startTime, personId, personName, similarity, ...}}
+    nextClipId: 1, // 클립 ID 자동 증가
+    
+    // 스냅샷 선택 관리
+    selectedSnapshots: [], // 선택된 스냅샷 ID 배열
+    
+    // 클립 선택 관리
+    selectedClips: [], // 선택된 클립 ID 배열
+    
+    // 타임라인 렌더링 타이머
+    timelineRenderTimer: null, // 타임라인 재렌더링 배치 처리용 타이머
+    
+    // 감지 로그 관리
+    detectionLogs: [], // 감지 로그 배열
+    lastLogTimeByPerson: new Map(), // 인물별 마지막 로그 비디오 타임스탬프 추적 (중복 방지용) - Map<PersonID, VideoTime>
+    LOG_COOLDOWN_SECONDS: 5 // 로그 쿨타임 (초)
 };
 
 // DOM 요소
@@ -68,6 +83,8 @@ const UI = {
     // 제어
     detectionFilter: document.getElementById('detectionFilter'),
     detectionInfo: document.getElementById('detectionInfo'),
+    detectionLogList: document.getElementById('detectionLogList'),
+    downloadLogBtn: document.getElementById('downloadLogBtn'),
     // 용의자 추가 모달
     addSuspectModal: document.getElementById('addSuspectModal'),
     addSuspectBtn: document.getElementById('addSuspectBtn'),
@@ -80,9 +97,15 @@ const UI = {
     imagePreview: document.getElementById('imagePreview'),
     previewImg: document.getElementById('previewImg'),
     imagePlaceholder: document.getElementById('imagePlaceholder'),
-    enrollError: document.getElementById('enrollError'),
     enrollSuccess: document.getElementById('enrollSuccess'),
+    enrollError: document.getElementById('enrollError'),
     submitEnrollBtn: document.getElementById('submitEnrollBtn'),
+    // 클립/스냅샷 버튼
+    viewClipsBtn: document.getElementById('viewClipsBtn'),
+    viewSnapshotsBtn: document.getElementById('viewSnapshotsBtn'),
+    // 모달
+    clipModal: document.getElementById('clipModal'),
+    snapshotModal: document.getElementById('snapshotModal'),
     cancelEnrollBtn: document.getElementById('cancelEnrollBtn'),
     // 프레임 추출
     extractFramesBtn: document.getElementById('extractFramesBtn')
@@ -123,12 +146,14 @@ async function loadPersons() {
 function createSuspectCard(person) {
     const displayName = personNameMapping[person.id] || person.name;
     const isCriminal = person.is_criminal;
+
+    // 색상 및 텍스트 설정
     const bgColor = isCriminal ? 'bg-red-100' : 'bg-blue-100';
-    const textColor = isCriminal ? 'text-red-600' : 'text-green-600';
-    const statusText = isCriminal ? '범죄자' : '일반인';
+    const textColor = isCriminal ? 'text-red-600' : 'text-blue-600';
+    const statusText = isCriminal ? '범죄자' : '실종자';
 
     const card = document.createElement('div');
-    card.className = 'suspect-card bg-white rounded-lg shadow-lg overflow-hidden cursor-pointer transform hover:scale-105 transition-all duration-200 relative';
+    card.className = 'suspect-card bg-white rounded-lg shadow-sm overflow-hidden cursor-pointer transform hover:scale-105 transition-all duration-200 relative';
     card.setAttribute('data-suspect-id', person.id);
     card.setAttribute('data-is-thief', isCriminal.toString());
 
@@ -145,7 +170,7 @@ function createSuspectCard(person) {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
             </svg>
         </div>
-        <div class="aspect-w-3 aspect-h-4 ${bgColor} flex items-center justify-center p-8 overflow-hidden">
+        <div class="h-48 ${bgColor} flex items-center justify-center overflow-hidden">
             ${imageHtml}
         </div>
         <div class="p-4">
@@ -296,15 +321,16 @@ function initCaptureCanvas() {
             }
             clearInterval(state.detectionInterval);
 
-            // 현재 감지 중인 클립 종료
-            if (state.currentClip) {
+            // 모든 활성 클립 종료
                 const endTime = UI.video.currentTime;
-                state.currentClip.endTime = endTime;
-                state.detectionClips.push(state.currentClip);
-                console.log(`✅ 감지 클립 종료: ${state.currentClip.personName} (${state.currentClip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
-                state.currentClip = null;
+            Object.keys(state.activeClips).forEach(personId => {
+                const clip = state.activeClips[personId];
+                clip.endTime = endTime;
+                state.detectionClips.push(clip);
+                console.log(`✅ 클립 종료: ${clip.personName} (${clip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
+                delete state.activeClips[personId];
+            });
                 updateClipCount();
-            }
 
             // WebSocket 재연결 중지
             if (state.wsReconnectTimer) {
@@ -331,42 +357,175 @@ function updateCanvasSize() {
     if (state.detectionCanvas && UI.video) {
         // 비디오의 실제 표시 크기 가져오기
         const videoRect = UI.video.getBoundingClientRect();
+        const containerRect = UI.video.parentElement.getBoundingClientRect();
+
+        // 캔버스 크기를 컨테이너와 정확히 일치시키기
         state.detectionCanvas.width = videoRect.width;
         state.detectionCanvas.height = videoRect.height;
     }
 }
 
-// 타임라인 마커 추가 (직접 구현)
-function addTimelineMarkerDirect(snapshot) {
-    console.log('📌 addTimelineMarkerDirect 호출됨:', {
-        videoExists: !!UI.video,
-        videoDuration: UI.video?.duration,
-        videoTime: snapshot.videoTime,
-        snapshotId: snapshot.id
+// ==========================================
+// 인물별 타임라인 트랙 생성
+// ==========================================
+
+/**
+ * 인물별 타임라인 트랙 생성
+ * @param {string} personId - 인물 ID
+ * @param {string} personName - 인물 이름
+ * @param {boolean} isCriminal - 범죄자 여부
+ * @returns {HTMLElement} 생성된 트랙 요소
+ */
+function createTimelineTrack(personId, personName, isCriminal) {
+    const track = document.createElement('div');
+    const bgColor = isCriminal ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200';
+    const textColor = isCriminal ? 'text-red-700' : 'text-green-700';
+    const labelText = isCriminal ? '범죄자' : '실종자';
+
+    track.className = `timeline-track ${bgColor} border rounded-sm px-2 py-1.5`;
+    track.dataset.personId = personId;
+    track.innerHTML = `
+            <div class="flex items-center justify-between mb-0.5">
+            <span class="text-xs font-semibold ${textColor}">${personName} (${labelText})</span>
+            <span class="text-xs text-gray-500">클릭 시 해당 시점으로 이동</span>
+        </div>
+            <div class="timeline-bar relative h-3 bg-white rounded-sm cursor-pointer transition-all duration-200 hover:scale-y-110 hover:brightness-110">
+                <!-- 마커들이 추가될 영역 -->
+            </div>
+        `;
+
+    return track;
+}
+
+/**
+ * 선택된 인물들의 타임라인 트랙 초기화 (사전 생성)
+ */
+function initializeTimelinesForSelectedPersons() {
+    const timelinesContainer = document.getElementById('timelinesContainer');
+    if (!timelinesContainer) {
+        console.error('❌ 타임라인 컨테이너를 찾을 수 없습니다!');
+        return;
+    }
+
+    // 기존 타임라인 모두 제거
+    timelinesContainer.innerHTML = '';
+    console.log('🗑️ 기존 타임라인 초기화');
+
+    // 선택된 각 인물에 대해 타임라인 트랙 생성
+    state.selectedSuspects.forEach(suspect => {
+        const track = createTimelineTrack(
+            suspect.id,
+            suspect.name,
+            suspect.isThief  // isThief가 true면 범죄자
+        );
+        timelinesContainer.appendChild(track);
+        console.log(`✅ 타임라인 트랙 생성: ${suspect.name} (${suspect.isThief ? '범죄자' : '실종자'})`);
     });
 
+    console.log(`📊 총 ${state.selectedSuspects.length}개 타임라인 트랙 생성 완료`);
+}
+
+// 타임라인 감지 구간 병합 함수
+function mergeTimelineEvents(events, mergeThreshold = 2.0) {
+    if (!events || events.length === 0) return [];
+    
+    // 시간순 정렬
+    const sortedEvents = [...events].sort((a, b) => a.start - b.start);
+    
+    // 병합 루프
+    const mergedEvents = [];
+    let currentEvent = { ...sortedEvents[0] };
+    
+    for (let i = 1; i < sortedEvents.length; i++) {
+        const nextEvent = sortedEvents[i];
+        
+        // 간격이 threshold 이내면 병합
+        if (nextEvent.start - currentEvent.end <= mergeThreshold) {
+            // 종료 시간 연장
+            currentEvent.end = Math.max(currentEvent.end, nextEvent.end);
+            // 신뢰도 평균 계산 (선택적)
+            if (currentEvent.similarity !== undefined && nextEvent.similarity !== undefined) {
+                currentEvent.similarity = Math.max(currentEvent.similarity, nextEvent.similarity);
+            }
+        } else {
+            // 간격이 넓으면 현재 이벤트 저장하고 교체
+            mergedEvents.push(currentEvent);
+            currentEvent = { ...nextEvent };
+        }
+    }
+    
+    // 마지막 이벤트 추가
+    mergedEvents.push(currentEvent);
+    
+    return mergedEvents;
+}
+
+// 타임라인 재렌더링 함수 (병합 로직 적용)
+function renderTimelineWithMerging() {
     if (!UI.video || !UI.video.duration || UI.video.duration === 0 || isNaN(UI.video.duration)) {
-        console.warn('⚠️ 비디오 duration이 아직 설정되지 않음, 재시도 예약');
-        // 비디오가 아직 로드되지 않았으면 나중에 다시 시도
-        setTimeout(() => addTimelineMarkerDirect(snapshot), 100);
         return;
     }
 
-    const timelineBar = document.getElementById('timelineBar');
-    if (!timelineBar) {
-        console.error('❌ 타임라인 바 요소를 찾을 수 없습니다!');
+    const timelinesContainer = document.getElementById('timelinesContainer');
+    if (!timelinesContainer) {
         return;
     }
 
-    const position = (snapshot.videoTime / UI.video.duration) * 100;
-    if (position < 0 || position > 100) {
-        console.warn('⚠️ 타임라인 위치가 범위를 벗어남:', position);
-        return;
-    }
+    // 인물별로 스냅샷 그룹화
+    const snapshotsByPerson = {};
+    state.snapshots.forEach(snapshot => {
+        const personId = snapshot.personId || 'unknown';
+        if (!snapshotsByPerson[personId]) {
+            snapshotsByPerson[personId] = [];
+        }
+        snapshotsByPerson[personId].push(snapshot);
+    });
+    
+    // 각 인물별로 타임라인 렌더링
+    Object.keys(snapshotsByPerson).forEach(personId => {
+        const track = timelinesContainer.querySelector(`[data-person-id="${personId}"]`);
+        if (!track) return;
+        
+    const timelineBar = track.querySelector('.timeline-bar');
+        if (!timelineBar) return;
+        
+        // 기존 마커 제거
+        timelineBar.innerHTML = '';
+        
+        const personSnapshots = snapshotsByPerson[personId];
+        const selectedPerson = state.selectedSuspects.find(s => s.id === personId);
+        if (!selectedPerson) return;
+        
+        const isCriminal = selectedPerson.isThief;
+    const markerColor = isCriminal
+        ? 'bg-red-500 hover:bg-red-700'
+        : 'bg-green-500 hover:bg-green-700';
 
+        // 스냅샷을 감지 구간으로 변환 (각 스냅샷을 0.1초 구간으로 가정)
+        const events = personSnapshots.map(snapshot => ({
+            start: snapshot.videoTime,
+            end: snapshot.videoTime + 0.1, // 각 감지 지점을 짧은 구간으로 처리
+            similarity: snapshot.similarity,
+            snapshotId: snapshot.id
+        }));
+        
+        // 병합 로직 적용
+        const mergedEvents = mergeTimelineEvents(events, 2.0);
+        
+        // 병합된 구간을 막대로 렌더링
+        mergedEvents.forEach(event => {
+            const startPercent = (event.start / UI.video.duration) * 100;
+            const endPercent = (event.end / UI.video.duration) * 100;
+            const widthPercent = endPercent - startPercent;
+            
+            if (startPercent < 0 || endPercent > 100) return;
+            
     const marker = document.createElement('div');
-    marker.className = 'absolute w-3 h-full bg-red-500 cursor-pointer hover:bg-red-700 transition-colors z-10';
-    marker.style.left = `${position}%`;
+            marker.className = `absolute h-full ${markerColor} cursor-pointer transition-all duration-200 hover:scale-y-110 hover:brightness-110 rounded-sm z-10`;
+            marker.style.left = `${startPercent}%`;
+            marker.style.width = `${widthPercent}%`;
+            marker.dataset.snapshotId = event.snapshotId;
+            marker.dataset.personId = personId;
 
     // 시간 포맷 헬퍼
     const formatTime = (seconds) => {
@@ -375,19 +534,52 @@ function addTimelineMarkerDirect(snapshot) {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    marker.title = `${snapshot.personName} - ${formatTime(snapshot.videoTime)}`;
-    marker.dataset.snapshotId = snapshot.id;
+            marker.title = `${selectedPerson.name} - ${formatTime(event.start)} ~ ${formatTime(event.end)}`;
 
+            // 마커 클릭 이벤트 (구간 시작 시점으로 이동)
     marker.addEventListener('click', (e) => {
         e.stopPropagation();
         if (UI.video) {
-            UI.video.currentTime = snapshot.videoTime;
+                    UI.video.currentTime = event.start;
             UI.video.play();
+                    console.log(`▶️ 비디오 이동: ${formatTime(event.start)}`);
+                }
+            });
+            
+            timelineBar.appendChild(marker);
+        });
+    });
+    
+    // 타임라인 바 클릭 이벤트 (한 번만 등록)
+    const timelineBars = timelinesContainer.querySelectorAll('.timeline-bar');
+    timelineBars.forEach(timelineBar => {
+    if (!timelineBar.dataset.clickHandlerAdded) {
+        timelineBar.addEventListener('click', (e) => {
+            if (e.target === timelineBar && UI.video) {
+                const rect = timelineBar.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const percentage = clickX / rect.width;
+                UI.video.currentTime = percentage * UI.video.duration;
+                UI.video.play();
+            }
+        });
+        timelineBar.dataset.clickHandlerAdded = 'true';
         }
     });
+}
 
-    timelineBar.appendChild(marker);
-    console.log(`✅ 타임라인 마커 추가됨: ${snapshot.personName} at ${position.toFixed(1)}% (${formatTime(snapshot.videoTime)})`);
+// 타임라인 마커 추가 (마커만 추가, 트랙은 미리 생성되어 있어야 함)
+// 이제는 스냅샷을 추가한 후 재렌더링하는 방식으로 변경
+function addTimelineMarkerDirect(snapshot) {
+    // 스냅샷이 추가되면 타임라인을 재렌더링 (병합 로직 적용)
+    // 약간의 딜레이를 두어 여러 스냅샷이 동시에 추가될 때 배치 처리
+    if (state.timelineRenderTimer) {
+        clearTimeout(state.timelineRenderTimer);
+    }
+    
+    state.timelineRenderTimer = setTimeout(() => {
+        renderTimelineWithMerging();
+    }, 100); // 100ms 딜레이로 배치 처리
 }
 
 // 스냅샷 개수 업데이트 (직접 구현)
@@ -399,7 +591,7 @@ function updateSnapshotCountDirect() {
     const countEl = document.getElementById('snapshotCount');
     if (countEl) {
         countEl.textContent = state.snapshots.length;
-        console.log(`✅ 스냅샷 개수 업데이트됨: ${state.snapshots.length}`);
+        console.log(`✅ 스냅샷 개수 업데이트됨: ${state.snapshots.length} `);
     } else {
         console.error('❌ 스냅샷 카운트 요소(snapshotCount)를 찾을 수 없습니다!');
     }
@@ -431,7 +623,7 @@ async function downloadVideoClip(clip) {
     const endTime = clip.endTime;
     const duration = endTime - startTime;
 
-    console.log(`🎬 클립 다운로드 시작: ${clip.personName} (${startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
+    console.log(`🎬 클립 다운로드 시작: ${clip.personName} (${startTime.toFixed(1)} s - ${endTime.toFixed(1)}s)`);
 
     try {
         // FormData 생성
@@ -811,9 +1003,9 @@ function connectWebSocket() {
                 sendWebSocketConfig(suspectIds);
                 // config_updated 메시지를 받은 후 wsConfigReady가 true가 되면 프레임 전송 시작
             } else {
-                // 선택된 용의자가 없어도 설정 완료로 표시 (전체 DB 검색)
-                state.wsConfigReady = true;
-                console.log("✅ WebSocket 설정 완료 (용의자 미선택 - 전체 검색)");
+                // 인물이 선택되지 않았으므로 감지를 시작하지 않음
+                state.wsConfigReady = false;
+                console.warn("⚠️ 인물이 선택되지 않았습니다. 인물을 선택한 후 감지를 시작하세요.");
 
                 // 설정 완료 후 첫 프레임 전송 (감지 활성화 상태일 때만)
                 if (state.isDetectionActive) {
@@ -1025,110 +1217,163 @@ function handleWebSocketMessage(message) {
         state.lastDetections = data.detections;
         state.lastDetectionTime = Date.now();
 
-        // 모든 감지 결과 로그 출력 (디버깅용)
+        // 정확한 비디오 타임스탬프 사용
+        const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (data.video_timestamp || 0);
+
+        // 1. 선택된 인물 필터링
+        let detectedSelectedPersons = [];
+        if (data.detections && data.detections.length > 0) {
+            const selectedPersonIds = state.selectedSuspects.map(s => s.id);
+            detectedSelectedPersons = data.detections.filter(d =>
+                selectedPersonIds.includes(d.metadata?.person_id || d.name)
+            );
+        }
+
+        // 디버깅 로그
         console.log('🔍 감지 결과 확인:', {
             alert: data.alert,
-            hasSnapshot: !!data.snapshot_base64,
-            snapshotLength: data.snapshot_base64 ? data.snapshot_base64.length : 0,
             detectionsCount: data.detections ? data.detections.length : 0,
-            metadata: data.metadata,
-            videoTimestamp: data.video_timestamp
+            selectedPersonsCount: detectedSelectedPersons.length,
+            names: detectedSelectedPersons.map(d => d.metadata?.name || d.name)
         });
 
-        // detections 배열에서 범죄자 확인
-        if (data.detections && data.detections.length > 0) {
-            const criminals = data.detections.filter(d => d.status === 'criminal');
-            console.log(`👮 범죄자 감지: ${criminals.length}명`, criminals.map(c => c.name));
-        }
-
-        if (data.alert) {
-            // 정확한 비디오 타임스탬프 사용 (백엔드 계산값보다 정확)
-            const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (data.video_timestamp || 0);
-
-            // 클립 추적: 범죄자 감지 시작
-            if (!state.currentClip) {
-                state.currentClip = {
-                    id: state.detectionClips.length + 1,
-                    startTime: videoTime,
-                    endTime: null,
-                    personId: data.metadata?.person_id || data.metadata?.name || 'Unknown',
-                    personName: data.metadata?.name || 'Unknown',
-                    similarity: data.metadata?.confidence || 0,
-                    status: 'criminal'
-                };
-                console.log(`🎬 감지 클립 시작: ${state.currentClip.personName} (${videoTime.toFixed(1)}s)`);
-            } else {
-                // 같은 사람이 계속 감지되면 클립 업데이트
-                state.currentClip.endTime = videoTime; // 종료 시간 갱신
-            }
-
-            // 스냅샷이 없으면 현재 프레임을 직접 캡처하여 사용
+        // 2. 선택된 인물들에 대해 처리 (타임라인 마커, 스냅샷, 클립)
+        if (detectedSelectedPersons.length > 0) {
+            // 스냅샷 이미지는 공유 (없으면 캡처)
             let snapshotImage = data.snapshot_base64;
             if (!snapshotImage) {
-                console.warn('⚠️ 범죄자 감지되었지만 snapshot_base64가 없습니다 (WebSocket)! 현재 프레임을 캡처합니다.');
                 snapshotImage = captureVideoFrame();
-                if (!snapshotImage) {
-                    console.error('❌ 프레임 캡처도 실패했습니다. 스냅샷을 저장할 수 없습니다.');
-                } else {
-                    console.log('✅ 현재 프레임을 캡처하여 스냅샷으로 사용합니다.');
+            }
+
+            detectedSelectedPersons.forEach(personData => {
+                const personId = personData.metadata?.person_id || personData.name || 'Unknown';
+                const personName = personData.metadata?.name || personData.name || 'Unknown';
+                // isThief 정보는 state.selectedSuspects에서 가져오는 것이 가장 정확함
+                const selectedSuspect = state.selectedSuspects.find(s => s.id === personId);
+                const isCriminal = selectedSuspect ? selectedSuspect.isThief : (personData.status === 'criminal');
+
+                // A. 스냅샷 생성 및 저장
+                if (snapshotImage) {
+                    const snapshot = {
+                        id: state.nextSnapshotId++,
+                        timestamp: new Date().toISOString(),
+                        videoTime: videoTime,
+                        personId: personId,
+                        personName: personName,
+                        isCriminal: isCriminal,
+                        similarity: personData.metadata?.confidence || 0,
+                        base64Image: snapshotImage,
+                        status: isCriminal ? 'criminal' : 'missing'
+                    };
+                    state.snapshots.push(snapshot);
+
+                    // B. 타임라인 마커 추가
+                    addTimelineMarkerDirect(snapshot);
+
+                    // C. 스냅샷 카운트 업데이트
+                    updateSnapshotCountDirect();
                 }
+
+                // D. 클립 추적 (인물별 클립 관리)
+                if (!state.activeClips[personId]) {
+                    // 새로운 클립 시작
+                    state.activeClips[personId] = {
+                        id: state.nextClipId++,
+                        startTime: videoTime,
+                        personId: personId,
+                        personName: personName,
+                        similarity: personData.metadata?.confidence || 0,
+                        isCriminal: isCriminal
+                    };
+                    console.log(`🎬 클립 시작: ${personName} (${videoTime.toFixed(1)}s)`);
+                } else {
+                    // 기존 클립 업데이트 (유사도 업데이트)
+                    state.activeClips[personId].similarity = Math.max(
+                        state.activeClips[personId].similarity,
+                        personData.metadata?.confidence || 0
+                    );
+                }
+            });
+
+            // 알림 효과 (범죄자가 한 명이라도 있으면 빨간 테두리)
+            const hasCriminal = detectedSelectedPersons.some(p => {
+                const pid = p.metadata?.person_id || p.name;
+                const suspect = state.selectedSuspects.find(s => s.id === pid);
+                return suspect && suspect.isThief;
+            });
+
+            if (hasCriminal) {
+                UI.video.parentElement.classList.add('alert-border');
+            } else {
+                UI.video.parentElement.classList.remove('alert-border');
             }
 
-            if (snapshotImage) {
-                const snapshot = {
-                    id: state.nextSnapshotId++,
-                    timestamp: new Date().toISOString(),
-                    videoTime: videoTime,
-                    personId: data.metadata?.person_id || data.metadata?.name || 'Unknown',
-                    personName: data.metadata?.name || 'Unknown',
-                    similarity: data.metadata?.confidence || 0,
-                    base64Image: snapshotImage,
-                    status: data.metadata?.status || 'criminal'
+            // 패널 업데이트 (첫 번째 감지된 인물 기준)
+            if (detectedSelectedPersons.length > 0) {
+                const firstPerson = detectedSelectedPersons[0];
+                const personId = firstPerson.metadata?.person_id || firstPerson.name || 'Unknown';
+                const selectedSuspect = state.selectedSuspects.find(s => s.id === personId);
+                const isCriminal = selectedSuspect ? selectedSuspect.isThief : (firstPerson.status === 'criminal');
+                
+                // metadata에 status 추가
+                const metadata = {
+                    ...firstPerson.metadata,
+                    name: firstPerson.metadata?.name || firstPerson.name || 'Unknown',
+                    confidence: firstPerson.metadata?.confidence || firstPerson.confidence || 0,
+                    status: isCriminal ? 'criminal' : 'missing',
+                    person_id: personId
                 };
-                state.snapshots.push(snapshot);
-                console.log(`✅ 스냅샷 저장됨: #${snapshot.id} - ${snapshot.personName} (${snapshot.videoTime.toFixed(1)}s), 총 ${state.snapshots.length}개`);
-
-                // 타임라인 마커 추가 및 카운트 업데이트 (직접 구현)
-                console.log('📌 타임라인 마커 추가 시도...');
-                addTimelineMarkerDirect(snapshot);
-                console.log('🔢 스냅샷 카운트 업데이트 시도...');
-                updateSnapshotCountDirect();
+                
+                // 스냅샷 이미지 가져오기
+                let snapshotImage = data.snapshot_base64;
+                if (!snapshotImage && detectedSelectedPersons.length > 0) {
+                    snapshotImage = captureVideoFrame();
+                }
+                
+                updateDetectionPanel(metadata, hasCriminal, videoTime, snapshotImage);
             }
+
         } else {
-            // 범죄자 감지 종료: 클립 종료
-            if (state.currentClip) {
-                const endTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
-                state.currentClip.endTime = endTime;
-                state.detectionClips.push(state.currentClip);
-                console.log(`✅ 감지 클립 종료: ${state.currentClip.personName} (${state.currentClip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
-                state.currentClip = null;
-                // 클립 개수 업데이트
-                updateClipCount();
+            // 감지된 선택 인물이 없음
+            UI.video.parentElement.classList.remove('alert-border');
+            
+            // 활성 클립 종료 (선택된 인물이 감지되지 않으면 모든 클립 종료)
+            const selectedPersonIds = state.selectedSuspects.map(s => s.id);
+            Object.keys(state.activeClips).forEach(personId => {
+                if (selectedPersonIds.includes(personId)) {
+                    const clip = state.activeClips[personId];
+                    clip.endTime = videoTime;
+                    state.detectionClips.push(clip);
+                    console.log(`✅ 클립 종료: ${clip.personName} (${clip.startTime.toFixed(1)}s - ${videoTime.toFixed(1)}s)`);
+                    delete state.activeClips[personId];
+                    updateClipCount();
+                }
+            });
+            
+            // 모든 감지 결과를 로그에 표시 (Unknown 포함)
+            if (data.detections && data.detections.length > 0) {
+                // 첫 번째 감지 결과를 로그에 표시
+                const firstDetection = data.detections[0];
+                const metadata = firstDetection.metadata || {
+                    name: firstDetection.name || 'Unknown',
+                    confidence: firstDetection.confidence || 0,
+                    status: firstDetection.status || 'unknown'
+                };
+                updateDetectionPanel(metadata, false);
+            } else {
+            updateDetectionPanel(null, false);
             }
         }
 
-        // 박스 렌더링
+        // 3. 박스 렌더링 (모든 감지된 인물 표시)
         if (data.detections && data.detections.length > 0 && UI.video.videoWidth > 0) {
-            const videoWidth = UI.video.videoWidth;
-            const videoHeight = UI.video.videoHeight;
-            drawDetections(data.detections, videoWidth, videoHeight);
+            drawDetections(data.detections, UI.video.videoWidth, UI.video.videoHeight);
         } else {
-            // 박스가 없으면 캔버스 클리어
             if (state.detectionCtx) {
                 state.detectionCtx.clearRect(0, 0, state.detectionCanvas.width, state.detectionCanvas.height);
             }
         }
 
-        // 알림 및 로그 업데이트
-        if (data.alert) {
-            UI.video.parentElement.classList.add('alert-border');
-            updateDetectionPanel(data.metadata, true);
-        } else {
-            UI.video.parentElement.classList.remove('alert-border');
-            updateDetectionPanel(data.metadata, false);
-        }
-
-        // 처리 완료 플래그 해제
         state.isProcessing = false;
 
     } else if (msgType === "error") {
@@ -1136,18 +1381,14 @@ function handleWebSocketMessage(message) {
         state.isProcessing = false;
 
     } else if (msgType === "pong") {
-        // 연결 확인 응답 (필요시 처리)
-
+        // 핑 응답
     } else if (msgType === "config_updated") {
         console.log("✅ 설정 업데이트됨:", message.suspect_ids);
-        state.wsConfigReady = true; // 설정 완료 플래그 설정
-
-        // 설정 완료 후 첫 프레임 전송 (감지 활성화 상태일 때만)
+        state.wsConfigReady = true;
         if (state.isDetectionActive && !state.isProcessing) {
-            console.log("🚀 WebSocket 설정 완료, 첫 프레임 전송 시작");
             setTimeout(() => {
                 processRealtimeDetection();
-            }, 50); // 연결 안정화를 위한 짧은 대기
+            }, 50);
         }
     }
 }
@@ -1183,79 +1424,154 @@ async function detectFrameToServerHTTP(frameData) {
             state.lastDetections = result.detections;
             state.lastDetectionTime = Date.now();
 
-            // 범죄자 감지 시 스냅샷 저장 (HTTP 폴백용)
-            console.log('🔍 HTTP 감지 결과 확인:', {
-                alert: result.alert,
-                hasSnapshot: !!result.snapshot_base64,
-                snapshotLength: result.snapshot_base64 ? result.snapshot_base64.length : 0,
-                metadata: result.metadata
-            });
+            // 정확한 비디오 타임스탬프 사용
+            const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (result.video_timestamp || 0);
 
-            if (result.alert) {
-                const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (result.video_timestamp || 0);
-
-                // 클립 추적: 범죄자 감지 시작
-                if (!state.currentClip) {
-                    state.currentClip = {
-                        id: state.detectionClips.length + 1,
-                        startTime: videoTime,
-                        endTime: null,
-                        personId: result.metadata?.person_id || result.metadata?.name || 'Unknown',
-                        personName: result.metadata?.name || 'Unknown',
-                        similarity: result.metadata?.confidence || 0,
-                        status: 'criminal'
-                    };
-                    console.log(`🎬 감지 클립 시작: ${state.currentClip.personName} (${videoTime.toFixed(1)}s)`);
-                } else {
-                    // 같은 사람이 계속 감지되면 클립 업데이트
-                    state.currentClip.endTime = videoTime; // 종료 시간 갱신
-                }
-
-                // 스냅샷이 없으면 현재 프레임을 직접 캡처하여 사용
-                let snapshotImage = result.snapshot_base64;
-                if (!snapshotImage) {
-                    console.warn('⚠️ 범죄자 감지되었지만 snapshot_base64가 없습니다 (HTTP)! 현재 프레임을 캡처합니다.');
-                    snapshotImage = captureVideoFrame();
-                    if (!snapshotImage) {
-                        console.error('❌ 프레임 캡처도 실패했습니다. 스냅샷을 저장할 수 없습니다.');
-                    } else {
-                        console.log('✅ 현재 프레임을 캡처하여 스냅샷으로 사용합니다.');
-                    }
-                }
-
-                if (snapshotImage) {
-                    const snapshot = {
-                        id: state.nextSnapshotId++,
-                        timestamp: new Date().toISOString(),
-                        videoTime: videoTime,
-                        personId: result.metadata?.person_id || result.metadata?.name || 'Unknown',
-                        personName: result.metadata?.name || 'Unknown',
-                        similarity: result.metadata?.confidence || 0,
-                        base64Image: snapshotImage,
-                        status: result.metadata?.status || 'criminal'
-                    };
-                    state.snapshots.push(snapshot);
-                    console.log(`✅ 스냅샷 저장됨 (HTTP): #${snapshot.id} - ${snapshot.personName} (${snapshot.videoTime.toFixed(1)}s), 총 ${state.snapshots.length}개`);
-
-                    // 타임라인 마커 추가 및 카운트 업데이트 (직접 구현)
-                    console.log('📌 타임라인 마커 추가 시도 (HTTP)...');
-                    addTimelineMarkerDirect(snapshot);
-                    console.log('🔢 스냅샷 카운트 업데이트 시도 (HTTP)...');
-                    updateSnapshotCountDirect();
-                }
-            } else {
-                // 범죄자 감지 종료: 클립 종료
-                if (state.currentClip) {
-                    const endTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
-                    state.currentClip.endTime = endTime;
-                    state.detectionClips.push(state.currentClip);
-                    console.log(`✅ 감지 클립 종료: ${state.currentClip.personName} (${state.currentClip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
-                    state.currentClip = null;
-                    // 클립 개수 업데이트
-                    updateClipCount();
-                }
+            // 1. 선택된 인물 필터링
+            let detectedSelectedPersons = [];
+            if (result.detections && result.detections.length > 0) {
+                const selectedPersonIds = state.selectedSuspects.map(s => s.id);
+                detectedSelectedPersons = result.detections.filter(d =>
+                    selectedPersonIds.includes(d.metadata?.person_id || d.name)
+                );
             }
 
+            // 디버깅 로그
+            console.log('🔍 HTTP 감지 결과 확인:', {
+                alert: result.alert,
+                detectionsCount: result.detections ? result.detections.length : 0,
+                selectedPersonsCount: detectedSelectedPersons.length,
+                names: detectedSelectedPersons.map(d => d.metadata?.name || d.name)
+            });
+
+            // 2. 선택된 인물들에 대해 처리 (타임라인 마커, 스냅샷, 클립)
+            if (detectedSelectedPersons.length > 0) {
+                // 스냅샷 이미지는 공유 (없으면 캡처)
+                let snapshotImage = result.snapshot_base64;
+                if (!snapshotImage) {
+                    snapshotImage = captureVideoFrame();
+                }
+
+                detectedSelectedPersons.forEach(personData => {
+                    const personId = personData.metadata?.person_id || personData.name || 'Unknown';
+                    const personName = personData.metadata?.name || personData.name || 'Unknown';
+                    // isThief 정보는 state.selectedSuspects에서 가져오는 것이 가장 정확함
+                    const selectedSuspect = state.selectedSuspects.find(s => s.id === personId);
+                    const isCriminal = selectedSuspect ? selectedSuspect.isThief : (personData.status === 'criminal');
+
+                    // A. 스냅샷 생성 및 저장
+                    if (snapshotImage) {
+                        const snapshot = {
+                            id: state.nextSnapshotId++,
+                            timestamp: new Date().toISOString(),
+                            videoTime: videoTime,
+                            personId: personId,
+                            personName: personName,
+                            isCriminal: isCriminal,
+                            similarity: personData.metadata?.confidence || 0,
+                            base64Image: snapshotImage,
+                            status: isCriminal ? 'criminal' : 'missing'
+                        };
+                        state.snapshots.push(snapshot);
+
+                        // B. 타임라인 마커 추가
+                        addTimelineMarkerDirect(snapshot);
+
+                        // C. 스냅샷 카운트 업데이트
+                        updateSnapshotCountDirect();
+                    }
+
+                    // D. 클립 추적 (인물별 클립 관리)
+                    if (!state.activeClips[personId]) {
+                        // 새로운 클립 시작
+                        state.activeClips[personId] = {
+                            id: state.nextClipId++,
+                            startTime: videoTime,
+                            personId: personId,
+                            personName: personName,
+                            similarity: personData.metadata?.confidence || 0,
+                            isCriminal: isCriminal
+                        };
+                        console.log(`🎬 클립 시작: ${personName} (${videoTime.toFixed(1)}s)`);
+                    } else {
+                        // 기존 클립 업데이트 (유사도 업데이트)
+                        state.activeClips[personId].similarity = Math.max(
+                            state.activeClips[personId].similarity,
+                            personData.metadata?.confidence || 0
+                        );
+                    }
+                });
+
+                // 알림 효과 (범죄자가 한 명이라도 있으면 빨간 테두리)
+                const hasCriminal = detectedSelectedPersons.some(p => {
+                    const pid = p.metadata?.person_id || p.name;
+                    const suspect = state.selectedSuspects.find(s => s.id === pid);
+                    return suspect && suspect.isThief;
+                });
+
+                if (hasCriminal) {
+                    UI.video.parentElement.classList.add('alert-border');
+                } else {
+                    UI.video.parentElement.classList.remove('alert-border');
+                }
+
+                // 패널 업데이트 (첫 번째 감지된 인물 기준)
+                if (detectedSelectedPersons.length > 0) {
+                    const firstPerson = detectedSelectedPersons[0];
+                    const personId = firstPerson.metadata?.person_id || firstPerson.name || 'Unknown';
+                    const selectedSuspect = state.selectedSuspects.find(s => s.id === personId);
+                    const isCriminal = selectedSuspect ? selectedSuspect.isThief : (firstPerson.status === 'criminal');
+                    
+                    // metadata에 status 추가
+                    const metadata = {
+                        ...firstPerson.metadata,
+                        name: firstPerson.metadata?.name || firstPerson.name || 'Unknown',
+                        confidence: firstPerson.metadata?.confidence || firstPerson.confidence || 0,
+                        status: isCriminal ? 'criminal' : 'missing',
+                        person_id: personId
+                    };
+                    
+                    // 스냅샷 이미지 가져오기
+                    let snapshotImage = result.snapshot_base64;
+                    if (!snapshotImage && detectedSelectedPersons.length > 0) {
+                        snapshotImage = captureVideoFrame();
+                    }
+                    
+                    const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
+                    updateDetectionPanel(metadata, hasCriminal, videoTime, snapshotImage);
+                }
+
+            } else {
+                // 감지된 선택 인물이 없음
+                UI.video.parentElement.classList.remove('alert-border');
+                
+                // 활성 클립 종료 (선택된 인물이 감지되지 않으면 모든 클립 종료)
+                const selectedPersonIds = state.selectedSuspects.map(s => s.id);
+                Object.keys(state.activeClips).forEach(personId => {
+                    if (selectedPersonIds.includes(personId)) {
+                        const clip = state.activeClips[personId];
+                        clip.endTime = videoTime;
+                        state.detectionClips.push(clip);
+                        console.log(`✅ 클립 종료: ${clip.personName} (${clip.startTime.toFixed(1)}s - ${videoTime.toFixed(1)}s)`);
+                        delete state.activeClips[personId];
+                        updateClipCount();
+                    }
+                });
+                
+                // 모든 감지 결과를 로그에 표시 (Unknown 포함)
+                if (result.detections && result.detections.length > 0) {
+                    // 첫 번째 감지 결과를 로그에 표시
+                    const firstDetection = result.detections[0];
+                    const metadata = firstDetection.metadata || {
+                        name: firstDetection.name || 'Unknown',
+                        confidence: firstDetection.confidence || 0,
+                        status: firstDetection.status || 'unknown'
+                    };
+                    updateDetectionPanel(metadata, false);
+                } else {
+                updateDetectionPanel(null, false);
+                }
+            }
             // 박스 렌더링
             if (result.detections && result.detections.length > 0 && UI.video.videoWidth > 0) {
                 const videoWidth = UI.video.videoWidth;
@@ -1271,10 +1587,14 @@ async function detectFrameToServerHTTP(frameData) {
             // 알림 및 로그 업데이트
             if (result.alert) {
                 UI.video.parentElement.classList.add('alert-border');
-                updateDetectionPanel(result.metadata, true);
+                const snapshotImage = result.snapshot_base64 || null;
+                const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
+                updateDetectionPanel(result.metadata, true, videoTime, snapshotImage);
             } else {
                 UI.video.parentElement.classList.remove('alert-border');
-                updateDetectionPanel(result.metadata, false);
+                const snapshotImage = result.snapshot_base64 || null;
+                const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
+                updateDetectionPanel(result.metadata, false, videoTime, snapshotImage);
             }
         }
 
@@ -1299,15 +1619,16 @@ async function processRealtimeDetection() {
             UI.detectionFilter.checked = false;
             clearInterval(state.detectionInterval);
 
-            // 현재 감지 중인 클립 종료
-            if (state.currentClip) {
+            // 모든 활성 클립 종료
                 const endTime = UI.video.currentTime;
-                state.currentClip.endTime = endTime;
-                state.detectionClips.push(state.currentClip);
-                console.log(`✅ 감지 클립 종료: ${state.currentClip.personName} (${state.currentClip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
-                state.currentClip = null;
+            Object.keys(state.activeClips).forEach(personId => {
+                const clip = state.activeClips[personId];
+                clip.endTime = endTime;
+                state.detectionClips.push(clip);
+                console.log(`✅ 클립 종료: ${clip.personName} (${clip.startTime.toFixed(1)}s - ${endTime.toFixed(1)}s)`);
+                delete state.activeClips[personId];
+            });
                 updateClipCount();
-            }
 
             updateDetectionPanel({ message: "비디오 종료됨" });
         }
@@ -1411,6 +1732,28 @@ UI.analyzeBtn.addEventListener('click', async () => {
 // 용의자 추가 기능
 // ==========================================
 
+// 폼 유효성 검사 함수
+function checkFormValidity() {
+    const name = UI.enrollName.value.trim();
+    const imageFile = UI.enrollImage.files[0];
+    const personType = document.getElementById('personTypeInput')?.value;
+    
+    const isValid = name && imageFile && personType;
+    
+    // 등록 버튼 상태 업데이트
+    if (isValid) {
+        UI.submitEnrollBtn.disabled = false;
+        UI.submitEnrollBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        UI.submitEnrollBtn.classList.add('opacity-100', 'cursor-pointer');
+    } else {
+        UI.submitEnrollBtn.disabled = true;
+        UI.submitEnrollBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        UI.submitEnrollBtn.classList.remove('opacity-100', 'cursor-pointer');
+    }
+    
+    return isValid;
+}
+
 // 모달 열기
 UI.addSuspectBtn?.addEventListener('click', () => {
     // 폼 완전 초기화
@@ -1419,11 +1762,26 @@ UI.addSuspectBtn?.addEventListener('click', () => {
     UI.imagePlaceholder.classList.remove('hidden');
     UI.enrollError.classList.add('hidden');
     UI.enrollSuccess.classList.add('hidden');
-    // 버튼 상태 초기화
-    UI.submitEnrollBtn.disabled = false;
+    
+    // 구분 선택 초기화 (범죄자로 설정)
+    const typeCriminal = document.getElementById('typeCriminal');
+    const typeMissing = document.getElementById('typeMissing');
+    if (typeCriminal) typeCriminal.checked = true;
+    if (typeMissing) typeMissing.checked = false;
+    document.getElementById('personTypeInput').value = 'criminal';
+    updatePersonTypeButtons();
+    
+    // 버튼 상태 초기화 (비활성화)
+    UI.submitEnrollBtn.disabled = true;
     UI.submitEnrollBtn.textContent = '등록';
+    UI.submitEnrollBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    UI.submitEnrollBtn.classList.remove('opacity-100', 'cursor-pointer');
+    
     // 모달 표시
     UI.addSuspectModal.classList.remove('hidden');
+    
+    // 초기 유효성 검사
+    checkFormValidity();
 });
 
 // 모달 외부 클릭 시 닫기
@@ -1449,6 +1807,19 @@ function closeEnrollModal() {
     UI.imagePlaceholder.classList.remove('hidden');
     UI.enrollError.classList.add('hidden');
     UI.enrollSuccess.classList.add('hidden');
+    
+    // 구분 선택 초기화
+    const typeCriminal = document.getElementById('typeCriminal');
+    const typeMissing = document.getElementById('typeMissing');
+    if (typeCriminal) typeCriminal.checked = true;
+    if (typeMissing) typeMissing.checked = false;
+    document.getElementById('personTypeInput').value = 'criminal';
+    updatePersonTypeButtons();
+    
+    // 버튼 상태 초기화 (비활성화)
+    UI.submitEnrollBtn.disabled = true;
+    UI.submitEnrollBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    UI.submitEnrollBtn.classList.remove('opacity-100', 'cursor-pointer');
 }
 
 // 모달 닫기
@@ -1472,30 +1843,42 @@ UI.enrollImage?.addEventListener('change', (e) => {
         };
         reader.readAsDataURL(file);
     }
+    // 폼 유효성 검사
+    checkFormValidity();
+});
+
+// 이름 입력 필드 이벤트 리스너
+UI.enrollName?.addEventListener('input', () => {
+    checkFormValidity();
 });
 
 // 폼 제출
 UI.addSuspectForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const personId = UI.enrollPersonId.value.trim();
+    // 입력값 가져오기
     const name = UI.enrollName.value.trim();
-    const isCriminal = UI.enrollIsCriminal.checked;
     const imageFile = UI.enrollImage.files[0];
 
+    // 인물 타입 가져오기 (세그먼트 컨트롤에서 선택된 값)
+    const personType = document.getElementById('personTypeInput')?.value || 'criminal';
+
+    // 인물 ID 자동 생성 (타임스탬프 기반)
+    const personId = `person_${Date.now()}`;
+
+    // hidden input에 자동 생성된 ID 설정
+    UI.enrollPersonId.value = personId;
+
     // 유효성 검사
-    if (!personId || !name || !imageFile) {
-        UI.enrollError.textContent = '모든 필드를 입력해주세요.';
+    if (!name) {
+        UI.enrollError.textContent = '이름을 입력해주세요.';
         UI.enrollError.classList.remove('hidden');
-        UI.enrollSuccess.classList.add('hidden');
         return;
     }
 
-    // person_id 유효성 검사 (영문, 숫자, 언더스코어만)
-    if (!/^[a-zA-Z0-9_]+$/.test(personId)) {
-        UI.enrollError.textContent = '인물 ID는 영문, 숫자, 언더스코어(_)만 사용 가능합니다.';
+    if (!imageFile) {
+        UI.enrollError.textContent = '정면 사진을 선택해주세요.';
         UI.enrollError.classList.remove('hidden');
-        UI.enrollSuccess.classList.add('hidden');
         return;
     }
 
@@ -1503,7 +1886,7 @@ UI.addSuspectForm?.addEventListener('submit', async (e) => {
     const formData = new FormData();
     formData.append('person_id', personId);
     formData.append('name', name);
-    formData.append('is_criminal', isCriminal);
+    formData.append('person_type', personType);  // criminal 또는 missing
     formData.append('image', imageFile);
 
     // 버튼 비활성화
@@ -1573,6 +1956,19 @@ UI.proceedBtn.addEventListener('click', () => {
         // 스냅샷 배열 초기화
         state.snapshots = [];
         state.nextSnapshotId = 1;
+        
+        // 클립 배열 초기화
+        state.detectionClips = [];
+        state.activeClips = {};
+        state.nextClipId = 1;
+        
+        // 감지 로그 초기화 (새 영상 시작 시)
+        state.detectionLogs = [];
+        state.lastLogTimeByPerson.clear();
+        const detectionLogList = UI.detectionLogList || document.getElementById('detectionLogList');
+        if (detectionLogList) {
+            detectionLogList.innerHTML = '<li class="text-gray-500 text-center py-4 tracking-tight">감지 대기 중...</li>';
+        }
 
         // 타임라인 초기화
         const timelineBar = document.getElementById('timelineBar');
@@ -1728,25 +2124,258 @@ UI.detectionFilter.addEventListener('change', (e) => {
     }
 });
 
-// 패널 업데이트 헬퍼
-function updateDetectionPanel(data, isAlert) {
-    if (data.message) {
-        UI.detectionInfo.innerHTML = `<p class="text-center py-4 text-gray-500">${data.message}</p>`;
+// 감지 로그 아이템 추가 함수
+function addDetectionLogItem(data, isAlert, videoTime, snapshotImage) {
+    if (!data) {
+        console.warn('⚠️ addDetectionLogItem: data가 없습니다.');
         return;
     }
 
-    const colorClass = isAlert ? "text-red-600 font-bold" : "text-green-600";
-    const statusText = isAlert ? "🚨 용의자 감지!" : "✅ 일반인 확인";
+    // UI.detectionLogList가 없으면 동적으로 찾기
+    const detectionLogList = UI.detectionLogList || document.getElementById('detectionLogList');
+    if (!detectionLogList) {
+        console.warn('⚠️ detectionLogList를 찾을 수 없습니다.');
+        return;
+    }
 
-    UI.detectionInfo.innerHTML = `
-        <div class="p-4 bg-white border rounded shadow-sm">
-            <div class="mb-2 ${colorClass}">${statusText}</div>
-            <div>이름: ${data.name}</div>
-            <div>신뢰도: ${data.confidence}%</div>
-            <div class="text-xs text-gray-400 mt-2">${new Date().toLocaleTimeString()}</div>
+    const status = data.status || 'unknown';
+    const name = data.name || 'Unknown';
+    const personId = data.person_id || data.name || 'unknown';
+    const confidence = data.confidence ? (typeof data.confidence === 'number' ? data.confidence.toFixed(1) : data.confidence) : '0.0';
+    
+    // 비디오 타임스탬프가 없으면 스킵
+    if (videoTime === undefined || videoTime === null || isNaN(videoTime)) {
+        console.warn('⚠️ addDetectionLogItem: videoTime이 없습니다.');
+        return;
+    }
+    
+    // 중복 방지: 동일 인물이 최근 쿨타임(5초) 이내에 로그가 추가되었는지 확인 (비디오 타임스탬프 기반)
+    const lastLogVideoTime = state.lastLogTimeByPerson.get(personId);
+    if (lastLogVideoTime !== undefined) {
+        const timeSinceLastLog = videoTime - lastLogVideoTime; // 비디오 시간 차이 (초)
+        
+        if (timeSinceLastLog < state.LOG_COOLDOWN_SECONDS) {
+            // 쿨타임 이내에 동일 인물의 로그가 있으면 스킵
+            console.log(`⏭️ 로그 스킵: ${name} (${timeSinceLastLog.toFixed(1)}초 전에 추가됨, 쿨타임: ${state.LOG_COOLDOWN_SECONDS}초)`);
+            return;
+        }
+    }
+    
+    console.log(`✅ 로그 추가: ${name} (${status}) - ${confidence}% @ ${videoTime.toFixed(1)}초`);
+    
+    // 마지막 로그 비디오 타임스탬프 업데이트
+    state.lastLogTimeByPerson.set(personId, videoTime);
+    
+    // 시간 포맷팅 (비디오 타임스탬프)
+    const formatVideoTime = (seconds) => {
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    // 상태에 따라 색상 결정
+    let nameColorClass, borderClass, bgClass;
+    if (status === 'criminal' || isAlert) {
+        nameColorClass = "text-red-600";
+        borderClass = "border-red-200";
+        bgClass = "bg-red-50";
+    } else if (status === 'missing') {
+        nameColorClass = "text-blue-600";
+        borderClass = "border-blue-200";
+        bgClass = "bg-gray-50";
+    } else {
+        nameColorClass = "text-gray-600";
+        borderClass = "border-gray-100";
+        bgClass = "bg-gray-50";
+    }
+    
+    // 썸네일 이미지 처리
+    let thumbnailHTML = '';
+    if (snapshotImage) {
+        thumbnailHTML = `<img src="${snapshotImage}" alt="${name}" class="w-10 h-10 rounded-full object-cover">`;
+    } else {
+        // 기본 아이콘
+        thumbnailHTML = `<div class="w-10 h-10 rounded-full ${status === 'criminal' || isAlert ? 'bg-red-100' : status === 'missing' ? 'bg-blue-100' : 'bg-gray-100'} flex items-center justify-center">
+            <svg class="w-6 h-6 ${status === 'criminal' || isAlert ? 'text-red-600' : status === 'missing' ? 'text-blue-600' : 'text-gray-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+            </svg>
+        </div>`;
+    }
+    
+    // 로그 아이템 생성
+    const logItem = document.createElement('li');
+    const logId = `${personId}_${videoTime}_${Date.now()}`;
+    logItem.className = `flex items-center gap-3 p-3 ${bgClass} rounded-lg border ${borderClass} hover:bg-gray-100 transition-colors cursor-pointer`;
+    logItem.dataset.videoTime = videoTime;
+    logItem.dataset.personId = personId;
+    logItem.dataset.logId = logId;
+    
+    logItem.innerHTML = `
+        ${thumbnailHTML}
+        <div class="flex-1 min-w-0">
+            <div class="font-bold text-sm ${nameColorClass}">${name}</div>
+            <div class="text-xs text-gray-500">정확도 ${confidence}%</div>
         </div>
+        <div class="text-xs text-gray-400 whitespace-nowrap">${formatVideoTime(videoTime || 0)}</div>
     `;
+    
+    // 클릭 이벤트: 비디오 시점으로 이동
+    logItem.addEventListener('click', () => {
+        if (UI.video && videoTime !== undefined && !isNaN(videoTime)) {
+            UI.video.currentTime = videoTime;
+            UI.video.play();
+            console.log(`▶️ 비디오 이동: ${formatVideoTime(videoTime)}`);
+        }
+    });
+    
+    // 리스트 최상단에 추가 (prepend)
+    const firstChild = detectionLogList.firstElementChild;
+    if (firstChild && firstChild.textContent && firstChild.textContent.trim() === '대기 중...') {
+        detectionLogList.removeChild(firstChild);
+    }
+    detectionLogList.insertBefore(logItem, detectionLogList.firstChild);
+    
+    // 스크롤 관리: 사용자가 스크롤을 올려서 과거 내역을 보고 있지 않으면 최상단 유지
+    if (UI.detectionInfo) {
+        const isAtTop = UI.detectionInfo.scrollTop < 50; // 50px 이내면 최상단으로 간주
+        if (isAtTop) {
+            UI.detectionInfo.scrollTop = 0;
+        }
+    }
+    
+    // 로그 배열에 추가 (누적 히스토리, 최대 200개 유지)
+    state.detectionLogs.unshift({
+        id: `${personId}_${videoTime}_${Date.now()}`, // 고유 ID
+        name,
+        personId,
+        status,
+        confidence,
+        videoTime, // 감지된 시점의 비디오 타임스탬프 (고정)
+        snapshotImage, // 감지된 순간의 스냅샷 (고정)
+        timestamp: Date.now() // 로그 생성 시간
+    });
+    if (state.detectionLogs.length > 200) {
+        // 오래된 로그 제거 (DOM에서도 제거)
+        const removedLog = state.detectionLogs.pop();
+        const removedElement = detectionLogList.querySelector(`[data-log-id="${removedLog.id}"]`);
+        if (removedElement) {
+            detectionLogList.removeChild(removedElement);
+        }
+    }
 }
+
+// 패널 업데이트 헬퍼 (누적 히스토리 방식)
+function updateDetectionPanel(data, isAlert, videoTime, snapshotImage) {
+    // UI.detectionLogList가 없으면 동적으로 찾기
+    const detectionLogList = UI.detectionLogList || document.getElementById('detectionLogList');
+    
+    // 초기화 금지: data가 null이거나 message일 때만 초기화 (누적 히스토리 유지)
+    if (!data) {
+        // 초기 상태일 때만 "대기 중..." 표시 (리스트가 비어있을 때만)
+        if (detectionLogList && detectionLogList.children.length === 0) {
+            detectionLogList.innerHTML = '<li class="text-gray-500 text-center py-4 tracking-tight">감지 대기 중...</li>';
+        }
+        return;
+    }
+
+    // 메시지 타입은 특별 처리 (시스템 메시지)
+    if (data.message) {
+        // 누적 히스토리 방식이므로 메시지는 로그에 추가하지 않음 (기존 로그 유지)
+        return;
+    }
+
+    // 새로운 로그 아이템 추가 (누적)
+    console.log('📝 updateDetectionPanel 호출:', { name: data.name, status: data.status, videoTime, hasSnapshot: !!snapshotImage });
+    addDetectionLogItem(data, isAlert, videoTime, snapshotImage);
+}
+
+// ==========================================
+// CSV 내보내기 기능
+// ==========================================
+
+// 감지 로그를 CSV 파일로 다운로드
+function downloadLogToCSV() {
+    // 1. 데이터 수집 (state.detectionLogs 배열 사용)
+    if (!state.detectionLogs || state.detectionLogs.length === 0) {
+        alert('저장할 감지 기록이 없습니다.');
+        return;
+    }
+    
+    // 2. CSV 헤더 및 데이터 행 생성
+    const rows = [["시간", "이름", "구분", "정확도(%)"]];
+    
+    // 시간 포맷팅 함수
+    const formatVideoTime = (seconds) => {
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    // 구분 텍스트 변환 함수
+    const getStatusText = (status) => {
+        if (status === 'criminal') return '범죄자';
+        if (status === 'missing') return '실종자';
+        return '미확인';
+    };
+    
+    // 로그 데이터를 시간순으로 정렬 (오래된 것부터)
+    const sortedLogs = [...state.detectionLogs].sort((a, b) => a.videoTime - b.videoTime);
+    
+    // 각 로그를 CSV 행으로 변환
+    sortedLogs.forEach(log => {
+        const time = formatVideoTime(log.videoTime || 0);
+        const name = log.name || 'Unknown';
+        const status = getStatusText(log.status || 'unknown');
+        const confidence = log.confidence ? (typeof log.confidence === 'number' ? log.confidence.toFixed(1) : log.confidence) : '0.0';
+        
+        rows.push([time, name, status, confidence]);
+    });
+    
+    // 3. CSV 문자열 생성
+    let csvContent = rows.map(row => {
+        // CSV 이스케이프 처리 (쉼표, 따옴표, 줄바꿈 포함 시)
+        return row.map(cell => {
+            const cellStr = String(cell);
+            if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+                return `"${cellStr.replace(/"/g, '""')}"`;
+            }
+            return cellStr;
+        }).join(',');
+    }).join('\n');
+    
+    // 4. BOM 추가 (한글 깨짐 방지)
+    const bom = '\uFEFF';
+    csvContent = bom + csvContent;
+    
+    // 5. 파일 다운로드
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    
+    // 파일명 생성 (YYYYMMDD_HHMM 형식)
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const filename = `detection_log_${year}${month}${day}_${hours}${minutes}.csv`;
+    
+    link.download = filename;
+    link.click();
+    
+    // 메모리 정리
+    URL.revokeObjectURL(link.href);
+    
+    console.log(`✅ CSV 다운로드 완료: ${filename} (${state.detectionLogs.length}개 기록)`);
+}
+
+// CSV 다운로드 버튼 이벤트 리스너
+UI.downloadLogBtn?.addEventListener('click', () => {
+    downloadLogToCSV();
+});
 
 // ==========================================
 // 초기화 및 모달 이벤트
@@ -1775,6 +2404,19 @@ UI.openUploadModalBtn?.addEventListener('click', () => {
 // 파일 업로드 모달 닫기
 UI.closeUploadModal?.addEventListener('click', () => {
     UI.uploadModal.classList.add('hidden');
+});
+
+// 모니터링 시작 버튼 (인물 선택 완료)
+UI.proceedBtn?.addEventListener('click', () => {
+    console.log('🎯 모니터링 시작 버튼 클릭');
+
+    // 선택된 인물들의 타임라인 트랙 생성
+    initializeTimelinesForSelectedPersons();
+
+    // 모달 닫기
+    UI.suspectSelectModal.classList.add('hidden');
+
+    console.log(`✅ 모니터링 준비 완료 - 선택된 인물: ${state.selectedSuspects.length}명`);
 });
 
 // 인물 선택 모달 열기
@@ -1817,10 +2459,641 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// ==========================================
+// 클립 데이터(clip)를 받아 카드 HTML을 반환하는 함수
+function getClipItemHTML(clip) {
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    const startTimeFormatted = formatTime(clip.startTime);
+    const endTimeFormatted = clip.endTime ? formatTime(clip.endTime) : '진행 중';
+    const duration = clip.endTime ? (clip.endTime - clip.startTime).toFixed(1) : '진행 중';
+    
+    return `
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-200" data-clip-id="${clip.id}">
+        <div class="p-4 flex items-start gap-4">
+            <div class="relative flex items-center mt-1">
+                <input type="checkbox" 
+                       id="clip-check-${clip.id}" 
+                       value="${clip.id}"
+                       class="peer appearance-none h-6 w-6 rounded-full border-2 border-gray-300 bg-white 
+                              checked:bg-indigo-600 checked:border-transparent 
+                              checked:ring-4 checked:ring-indigo-500/20 
+                              transition-all duration-200 cursor-pointer z-10"
+                       ${clip.isSelected ? 'checked' : ''}
+                       ${!clip.endTime ? 'disabled' : ''}
+                       onchange="toggleClipSelection(${clip.id}, this.checked)">
+                
+                <svg class="absolute w-4 h-4 text-white left-1 top-1 pointer-events-none opacity-0 peer-checked:opacity-100 transition-opacity duration-200 z-20" 
+                     fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 class="text-base font-bold text-gray-800 leading-tight">${clip.personName || 'Unknown'}</h4>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                                ${startTimeFormatted} - ${endTimeFormatted}
+                            </span>
+                            <span class="text-xs text-gray-400">
+                                (길이: ${duration}초)
+                            </span>
+                        </div>
+                    </div>
+                    <button onclick="window.seekToClip(${clip.startTime})" 
+                            class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-medium transition-colors">
+                        재생
+                    </button>
+                </div>
+            </div>
+        </div>
+        ${clip.videoUrl && clip.endTime ? `
+        <div class="w-full bg-black aspect-video relative group">
+            <video src="${clip.videoUrl}" 
+                   class="w-full h-full object-contain" 
+                   controls 
+                   preload="metadata"
+                   onloadedmetadata="this.currentTime=${clip.startTime}">
+                <source src="${clip.videoUrl}" type="video/mp4">
+                비디오를 재생할 수 없습니다.
+            </video>
+        </div>
+        ` : ''}
+    </div>
+    `;
+}
+
+// 클립/스냅샷 버튼 이벤트
+// ==========================================
+// 클립 보기 버튼 이벤트
+UI.viewClipsBtn?.addEventListener('click', () => {
+    console.log('📹 클립 보기 버튼 클릭');
+    console.log(`현재 클립 개수: ${state.detectionClips.length}`);
+    
+    const modal = document.getElementById('clipModal');
+    const list = document.getElementById('clipList');
+    
+    if (!modal || !list) {
+        console.error('클립 모달 요소를 찾을 수 없습니다.');
+        return;
+    }
+    
+    if (state.detectionClips.length === 0) {
+        list.innerHTML = '<p class="text-center py-8 text-gray-500">아직 감지된 클립이 없습니다.</p>';
+    } else {
+        const formatTime = (seconds) => {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        };
+        
+        // 선택 상태 초기화 (모달 열 때마다)
+        state.selectedClips = [];
+        updateSelectedClipCount();
+        
+        list.innerHTML = state.detectionClips.map(clip => {
+            const videoUrl = state.selectedFile ? URL.createObjectURL(state.selectedFile) : '';
+            const isSelected = state.selectedClips.includes(clip.id);
+            
+            return getClipItemHTML({
+                ...clip,
+                videoUrl: videoUrl,
+                isSelected: isSelected
+            });
+        }).join('');
+    }
+    
+    modal.classList.remove('hidden');
+});
+
+// 클립 선택 토글 함수
+window.toggleClipSelection = function(clipId, isChecked) {
+    if (isChecked) {
+        if (!state.selectedClips.includes(clipId)) {
+            state.selectedClips.push(clipId);
+        }
+    } else {
+        state.selectedClips = state.selectedClips.filter(id => id !== clipId);
+    }
+    updateSelectedClipCount();
+};
+
+// 선택된 클립 개수 업데이트
+function updateSelectedClipCount() {
+    const countEl = document.getElementById('selectedClipCount');
+    if (countEl) {
+        countEl.textContent = state.selectedClips.length;
+    }
+    
+    // 선택 다운로드 버튼 활성화/비활성화
+    const downloadSelectedClipsBtn = document.getElementById('downloadSelectedClipsBtn');
+    if (downloadSelectedClipsBtn) {
+        downloadSelectedClipsBtn.disabled = state.selectedClips.length === 0;
+    }
+}
+
+// 전체 클립 선택 버튼
+document.getElementById('selectAllClipsBtn')?.addEventListener('click', () => {
+    const checkboxes = document.querySelectorAll('#clipList input[type="checkbox"]:not(:disabled)');
+    
+    // 모든 체크박스를 선택 상태로 설정
+    checkboxes.forEach(checkbox => {
+        const clipId = parseInt(checkbox.value || checkbox.id.replace('clip-check-', ''));
+        checkbox.checked = true;
+        
+        // 상태 동기화
+        if (!state.selectedClips.includes(clipId)) {
+            state.selectedClips.push(clipId);
+        }
+    });
+    
+    // 개수 업데이트
+    updateSelectedClipCount();
+});
+
+// 전체 클립 해제 버튼
+document.getElementById('deselectAllClipsBtn')?.addEventListener('click', () => {
+    const checkboxes = document.querySelectorAll('#clipList input[type="checkbox"]');
+    
+    // 모든 체크박스를 해제 상태로 설정
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
+    // 상태 초기화
+    state.selectedClips = [];
+    
+    // 개수 업데이트
+    updateSelectedClipCount();
+});
+
+// 선택 클립 다운로드 버튼 이벤트
+document.getElementById('downloadSelectedClipsBtn')?.addEventListener('click', async () => {
+    if (state.selectedClips.length === 0) {
+        alert('다운로드할 클립을 선택해주세요.');
+        return;
+    }
+    
+    const selectedClips = state.detectionClips.filter(clip => 
+        state.selectedClips.includes(clip.id) && clip.endTime
+    );
+    
+    if (selectedClips.length === 0) {
+        alert('선택된 클립을 찾을 수 없거나 아직 완료되지 않은 클립입니다.');
+        return;
+    }
+    
+    if (!state.selectedFile) {
+        alert('비디오 파일이 없습니다.');
+        return;
+    }
+    
+    console.log(`🎬 ${selectedClips.length}개의 선택된 클립 다운로드 시작`);
+    
+    // 순차적으로 다운로드
+    for (let i = 0; i < selectedClips.length; i++) {
+        const clip = selectedClips[i];
+        try {
+            await downloadVideoClip(clip);
+            // 다운로드 간 약간의 딜레이
+            if (i < selectedClips.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        } catch (error) {
+            console.error(`클립 다운로드 실패: ${clip.id}`, error);
+            alert(`클립 다운로드 중 오류가 발생했습니다: ${clip.personName}`);
+        }
+    }
+    
+    console.log(`✅ ${selectedClips.length}개의 선택된 클립 다운로드 완료`);
+});
+
+// 스냅샷 카드 렌더링 헬퍼 함수
+function renderSnapshotCard(snapshot) {
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    const isSelected = state.selectedSnapshots.includes(snapshot.id);
+    
+    return `
+                <div class="bg-white rounded-lg shadow-sm overflow-hidden relative" data-person-name="${snapshot.personName}" data-snapshot-id="${snapshot.id}">
+                    <div class="absolute top-2 left-2 z-10">
+                        <input type="checkbox" 
+                               class="snapshot-checkbox appearance-none h-7 w-7 rounded-full border-2 border-white/50 bg-white/20 backdrop-blur-sm checked:bg-white/40 checked:border-white/80 focus:ring-2 focus:ring-white/50 focus:ring-offset-2 cursor-pointer transition-all duration-200 ease-in-out" 
+                               ${isSelected ? 'checked' : ''}
+                               onchange="toggleSnapshotSelection(${snapshot.id}, this.checked)">
+                    </div>
+                    <img src="${snapshot.base64Image}" alt="${snapshot.personName}" class="w-full h-48 object-cover cursor-pointer" 
+                         onclick="window.open(this.src)">
+                    <div class="p-3">
+                        <div class="font-semibold text-sm text-gray-800 tracking-tight">${snapshot.personName}</div>
+                        <div class="text-xs text-gray-600 mt-1 tracking-tight">시간: ${formatTime(snapshot.videoTime)}</div>
+                        <div class="text-xs text-gray-600 tracking-tight">유사도: ${snapshot.similarity}%</div>
+                        <div class="text-xs text-gray-500 tracking-tight">${new Date(snapshot.timestamp).toLocaleString()}</div>
+                    </div>
+                </div>
+    `;
+}
+
+// 스냅샷 그리드 필터링 함수
+function filterSnapshotsByPerson(personName) {
+    const grid = document.getElementById('snapshotGrid');
+    if (!grid) return;
+    
+    const cards = grid.querySelectorAll('[data-person-name]');
+    cards.forEach(card => {
+        if (personName === '전체' || card.dataset.personName === personName) {
+            card.style.display = '';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+// 현재 선택된 인물 필터 (전역 변수)
+let currentSnapshotFilter = '전체';
+
+// 스냅샷 보기 버튼 이벤트
+UI.viewSnapshotsBtn?.addEventListener('click', () => {
+    console.log('📸 스냅샷 보기 버튼 클릭');
+    console.log(`현재 스냅샷 개수: ${state.snapshots.length}`);
+    
+    const modal = document.getElementById('snapshotModal');
+    const grid = document.getElementById('snapshotGrid');
+    const tabsContainer = document.getElementById('snapshotTabs');
+    
+    if (!modal || !grid || !tabsContainer) {
+        console.error('스냅샷 모달 요소를 찾을 수 없습니다.');
+        return;
+    }
+    
+    if (state.snapshots.length === 0) {
+        tabsContainer.innerHTML = '';
+        grid.innerHTML = '<p class="col-span-full text-center py-8 text-gray-500">아직 캡처된 스냅샷이 없습니다.</p>';
+        currentSnapshotFilter = '전체';
+    } else {
+        // 인물별로 그룹화
+        const personGroups = {};
+        state.snapshots.forEach(snapshot => {
+            const personName = snapshot.personName || 'Unknown';
+            if (!personGroups[personName]) {
+                personGroups[personName] = [];
+            }
+            personGroups[personName].push(snapshot);
+        });
+        
+        // 탭 생성
+        const personNames = Object.keys(personGroups).sort();
+        tabsContainer.innerHTML = `
+            <div class="flex flex-wrap gap-2 overflow-x-auto pb-2">
+                <button class="snapshot-tab active px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-200 shadow-sm" 
+                        data-person="전체">
+                    전체 (${state.snapshots.length})
+                </button>
+                ${personNames.map(personName => `
+                    <button class="snapshot-tab px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition-all duration-200" 
+                            data-person="${personName}">
+                        ${personName} (${personGroups[personName].length})
+                    </button>
+                `).join('')}
+            </div>
+        `;
+        
+        // 모든 스냅샷 렌더링
+        grid.innerHTML = state.snapshots.map(snapshot => renderSnapshotCard(snapshot)).join('');
+        
+        // 초기 필터 적용
+        currentSnapshotFilter = '전체';
+        filterSnapshotsByPerson('전체');
+        
+        // 탭 클릭 이벤트 등록
+        const tabs = tabsContainer.querySelectorAll('.snapshot-tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                // 모든 탭 비활성화
+                tabs.forEach(t => {
+                    t.classList.remove('active', 'bg-indigo-600', 'text-white', 'shadow-sm');
+                    t.classList.add('bg-gray-200', 'text-gray-700');
+                });
+                
+                // 클릭한 탭 활성화
+                tab.classList.add('active', 'bg-indigo-600', 'text-white', 'shadow-sm');
+                tab.classList.remove('bg-gray-200', 'text-gray-700');
+                
+                // 필터링 적용
+                const selectedPerson = tab.dataset.person;
+                currentSnapshotFilter = selectedPerson;
+                filterSnapshotsByPerson(selectedPerson);
+                
+                // 필터 변경 시 선택 상태 유지 (체크박스만 업데이트)
+                updateSnapshotCheckboxes();
+                updateSelectedCount();
+            });
+        });
+    }
+    
+    modal.classList.remove('hidden');
+});
+
+// ==========================================
+// 클립/스냅샷 모달 닫기 이벤트
+// ==========================================
+// 클립 모달 닫기 버튼들
+document.getElementById('closeClipModalBtn')?.addEventListener('click', () => {
+    const clipModal = document.getElementById('clipModal');
+    if (clipModal) {
+        clipModal.classList.add('hidden');
+    }
+});
+
+document.getElementById('closeClipModalBtn2')?.addEventListener('click', () => {
+    const clipModal = document.getElementById('clipModal');
+    if (clipModal) {
+        clipModal.classList.add('hidden');
+    }
+});
+
+// 전역 함수: 클립으로 이동 (HTML onclick에서 호출)
+window.seekToClip = function(startTime) {
+    if (UI.video) {
+        UI.video.currentTime = startTime;
+        UI.video.play();
+        const clipModal = document.getElementById('clipModal');
+        if (clipModal) {
+            clipModal.classList.add('hidden');
+        }
+    }
+};
+
+// 전역 함수: 클립 다운로드 (HTML onclick에서 호출)
+window.downloadClip = function(clipId) {
+    const clip = state.detectionClips.find(c => c.id === clipId);
+    if (clip) {
+        downloadVideoClip(clip);
+    } else {
+        console.error(`클립을 찾을 수 없습니다: ${clipId}`);
+    }
+};
+
+// 스냅샷 모달 닫기 버튼들  
+document.getElementById('closeModalBtn')?.addEventListener('click', () => {
+    const snapshotModal = document.getElementById('snapshotModal');
+    if (snapshotModal) {
+        snapshotModal.classList.add('hidden');
+    }
+});
+
+document.getElementById('closeModalBtn2')?.addEventListener('click', () => {
+    const snapshotModal = document.getElementById('snapshotModal');
+    if (snapshotModal) {
+        snapshotModal.classList.add('hidden');
+    }
+});
+
+// 모달 외부 클릭 시 닫기
+document.getElementById('clipModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'clipModal') {
+        e.target.classList.add('hidden');
+    }
+});
+
+document.getElementById('snapshotModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'snapshotModal') {
+        e.target.classList.add('hidden');
+    }
+});
+
+// 전역 함수: 스냅샷 다운로드 (HTML onclick에서 호출)
+window.downloadSnapshot = function(snapshotId) {
+    const snapshot = state.snapshots.find(s => s.id === snapshotId);
+    if (!snapshot) {
+        console.error(`스냅샷을 찾을 수 없습니다: ${snapshotId}`);
+        return;
+    }
+    
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    const link = document.createElement('a');
+    link.href = snapshot.base64Image;
+    link.download = `criminal_${snapshot.personName}_${formatTime(snapshot.videoTime).replace(':', '-')}.jpg`;
+    link.click();
+};
+
+// 스냅샷 선택 토글 함수
+window.toggleSnapshotSelection = function(snapshotId, isChecked) {
+    if (isChecked) {
+        if (!state.selectedSnapshots.includes(snapshotId)) {
+            state.selectedSnapshots.push(snapshotId);
+        }
+    } else {
+        state.selectedSnapshots = state.selectedSnapshots.filter(id => id !== snapshotId);
+    }
+    updateSelectedCount();
+};
+
+// 선택된 스냅샷 개수 업데이트
+function updateSelectedCount() {
+    const countEl = document.getElementById('selectedCount');
+    if (countEl) {
+        countEl.textContent = state.selectedSnapshots.length;
+    }
+    
+    // 선택 다운로드 버튼 활성화/비활성화
+    const downloadSelectedBtn = document.getElementById('downloadSelectedBtn');
+    if (downloadSelectedBtn) {
+        downloadSelectedBtn.disabled = state.selectedSnapshots.length === 0;
+    }
+};
+
+// 전체 선택 버튼
+document.getElementById('selectAllBtn')?.addEventListener('click', () => {
+    // 현재 필터에 맞는 스냅샷만 선택
+    const filteredSnapshots = currentSnapshotFilter === '전체' 
+        ? state.snapshots 
+        : state.snapshots.filter(s => s.personName === currentSnapshotFilter);
+    
+    filteredSnapshots.forEach(snapshot => {
+        if (!state.selectedSnapshots.includes(snapshot.id)) {
+            state.selectedSnapshots.push(snapshot.id);
+        }
+    });
+    
+    // 체크박스 업데이트
+    updateSnapshotCheckboxes();
+    updateSelectedCount();
+});
+
+// 전체 해제 버튼
+document.getElementById('deselectAllBtn')?.addEventListener('click', () => {
+    // 현재 필터에 맞는 스냅샷만 해제
+    const filteredSnapshots = currentSnapshotFilter === '전체' 
+        ? state.snapshots 
+        : state.snapshots.filter(s => s.personName === currentSnapshotFilter);
+    
+    const filteredIds = filteredSnapshots.map(s => s.id);
+    state.selectedSnapshots = state.selectedSnapshots.filter(id => !filteredIds.includes(id));
+    
+    // 체크박스 업데이트
+    updateSnapshotCheckboxes();
+    updateSelectedCount();
+});
+
+// 체크박스 상태 업데이트
+function updateSnapshotCheckboxes() {
+    const checkboxes = document.querySelectorAll('.snapshot-checkbox');
+    checkboxes.forEach(checkbox => {
+        const snapshotId = parseInt(checkbox.getAttribute('onchange').match(/\d+/)[0]);
+        checkbox.checked = state.selectedSnapshots.includes(snapshotId);
+    });
+}
+
+// 선택 다운로드 버튼 이벤트
+document.getElementById('downloadSelectedBtn')?.addEventListener('click', async () => {
+    if (state.selectedSnapshots.length === 0) {
+        alert('다운로드할 스냅샷을 선택해주세요.');
+        return;
+    }
+    
+    const selectedSnapshots = state.snapshots.filter(s => state.selectedSnapshots.includes(s.id));
+    
+    if (selectedSnapshots.length === 0) {
+        alert('선택된 스냅샷을 찾을 수 없습니다.');
+        return;
+    }
+    
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    // 순차적으로 다운로드
+    for (let i = 0; i < selectedSnapshots.length; i++) {
+        const snapshot = selectedSnapshots[i];
+        const link = document.createElement('a');
+        link.href = snapshot.base64Image;
+        link.download = `${i + 1}_criminal_${snapshot.personName}_${formatTime(snapshot.videoTime).replace(':', '-')}.jpg`;
+        link.click();
+        
+        // 다운로드 간 약간의 딜레이 (브라우저가 처리할 시간 제공)
+        if (i < selectedSnapshots.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    }
+    
+    console.log(`✅ ${selectedSnapshots.length}개의 선택된 스냅샷 다운로드 완료`);
+});
+
+// 전체 다운로드 버튼 이벤트 (현재 필터링된 스냅샷만 다운로드)
+document.getElementById('downloadAllBtn')?.addEventListener('click', async () => {
+    if (state.snapshots.length === 0) {
+        alert('다운로드할 스냅샷이 없습니다.');
+        return;
+    }
+    
+    // 현재 필터에 맞는 스냅샷만 필터링
+    const filteredSnapshots = currentSnapshotFilter === '전체' 
+        ? state.snapshots 
+        : state.snapshots.filter(s => s.personName === currentSnapshotFilter);
+    
+    if (filteredSnapshots.length === 0) {
+        alert('다운로드할 스냅샷이 없습니다.');
+        return;
+    }
+    
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    // 순차적으로 다운로드
+    for (let i = 0; i < filteredSnapshots.length; i++) {
+        const snapshot = filteredSnapshots[i];
+        const link = document.createElement('a');
+        link.href = snapshot.base64Image;
+        link.download = `${i + 1}_criminal_${snapshot.personName}_${formatTime(snapshot.videoTime).replace(':', '-')}.jpg`;
+        link.click();
+        
+        // 브라우저가 따라잡을 시간 주기
+        await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    alert(`${filteredSnapshots.length}개의 스냅샷 다운로드를 시작했습니다.`);
+});
+
 // 초기 화면 설정
 updateDashboardView();
 
 // 캔버스 초기화
 initCaptureCanvas();
+
+// ==========================================
+// 세그먼트 컨트롤 (인물 타입 선택)
+// ==========================================
+// 구분 선택 버튼 상태 업데이트 함수
+function updatePersonTypeButtons() {
+    const typeCriminal = document.getElementById('typeCriminal');
+    const typeMissing = document.getElementById('typeMissing');
+    const btnCriminal = document.getElementById('btnCriminal');
+    const btnMissing = document.getElementById('btnMissing');
+    
+    if (typeCriminal && typeCriminal.checked) {
+        // 범죄자 선택됨
+        btnCriminal.classList.add('bg-white', 'shadow-sm', 'text-red-600');
+        btnCriminal.classList.remove('text-gray-500');
+        btnMissing.classList.add('text-gray-500');
+        btnMissing.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+    document.getElementById('personTypeInput').value = 'criminal';
+    } else if (typeMissing && typeMissing.checked) {
+        // 실종자 선택됨
+        btnMissing.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+        btnMissing.classList.remove('text-gray-500');
+        btnCriminal.classList.add('text-gray-500');
+        btnCriminal.classList.remove('bg-white', 'shadow-sm', 'text-red-600');
+        document.getElementById('personTypeInput').value = 'missing';
+    }
+    
+    // 폼 유효성 검사
+    checkFormValidity();
+}
+
+// 구분 선택 라디오 버튼 이벤트 리스너
+document.getElementById('typeCriminal')?.addEventListener('change', () => {
+    updatePersonTypeButtons();
+});
+
+document.getElementById('typeMissing')?.addEventListener('change', () => {
+    updatePersonTypeButtons();
+});
+
+// 구분 선택 라벨 클릭 이벤트 (라디오 버튼 토글)
+document.getElementById('btnCriminal')?.addEventListener('click', () => {
+    const typeCriminal = document.getElementById('typeCriminal');
+    if (typeCriminal) {
+        typeCriminal.checked = true;
+        updatePersonTypeButtons();
+    }
+});
+
+document.getElementById('btnMissing')?.addEventListener('click', () => {
+    const typeMissing = document.getElementById('typeMissing');
+    if (typeMissing) {
+        typeMissing.checked = true;
+        updatePersonTypeButtons();
+    }
+});
 
 console.log("✅ FaceWatch 프론트엔드 초기화 완료");

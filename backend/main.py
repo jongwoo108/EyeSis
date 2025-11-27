@@ -1239,7 +1239,7 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         bank_type = "unknown"  # ← 초기화 추가!
         
         # suspect_ids가 지정된 경우: 선택된 용의자들만 검색 (전체 DB 검색 안 함)
-        if suspect_ids:
+        if suspect_ids and len(suspect_ids) > 0:
             # 선택된 용의자들만 포함한 base/masked/dynamic 갤러리 생성
             target_base_gallery = {}
             target_masked_gallery = {}
@@ -1264,17 +1264,11 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             if target_dynamic_gallery:
                 best_dynamic_person_id, dynamic_sim, second_dynamic_sim = match_with_bank_detailed(embedding, target_dynamic_gallery)
         
-        # 전체 DB 검색 (suspect_ids가 없는 경우에만 수행)
+        # suspect_ids가 없거나 비어있는 경우: 매칭 시도하지 않음 (모든 얼굴을 unknown으로 처리)
         else:
-            if gallery_base_cache:
-                best_base_person_id, base_sim, second_base_sim = match_with_bank_detailed(embedding, gallery_base_cache)
-            
-            if gallery_masked_cache:
-                best_mask_person_id, masked_sim, second_mask_sim = match_with_bank_detailed(embedding, gallery_masked_cache)
-            
-            # Dynamic Bank 매칭 (인식용)
-            if gallery_dynamic_cache:
-                best_dynamic_person_id, dynamic_sim, second_dynamic_sim = match_with_bank_detailed(embedding, gallery_dynamic_cache)
+            # 인물이 선택되지 않았으므로 매칭을 시도하지 않음
+            # best_person_id는 None으로 유지되고, 아래 로직에서 unknown으로 처리됨
+            print(f"   - 인물 미선택 모드: 모든 얼굴을 unknown으로 처리")
         
         # 세 결과 중 더 좋은 후보 선택 (best_sim)
         # Dynamic bank는 인식률 향상을 위해 우선순위가 높음 (다양한 각도 임베딩 포함)
@@ -1295,14 +1289,23 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             bank_type = "masked"
         
         # best_match 찾기
-        if best_person_id != "unknown" and max_similarity > 0:
+        # suspect_ids가 없거나 비어있으면 매칭을 시도하지 않음 (unknown으로 처리)
+        if not suspect_ids or len(suspect_ids) == 0:
+            best_match = None
+            best_person_id = "unknown"
+            max_similarity = 0.0
+            second_similarity = 0.0
+        elif best_person_id != "unknown" and max_similarity > 0:
             best_match = find_person_info(best_person_id)
         else:
-            # 직접 비교 (fallback)
+            # suspect_ids가 있는 경우에만 fallback 매칭 시도
             similarities = []
-            for person in persons_cache:
-                sim = compute_cosine_similarity(embedding, person["embedding"])
-                similarities.append((sim, person))
+            # 선택된 용의자들만 비교
+            for sid in suspect_ids:
+                person = find_person_info(sid)
+                if person and person.get("embedding") is not None:
+                    sim = compute_cosine_similarity(embedding, person["embedding"])
+                    similarities.append((sim, person))
             
             # 유사도 순으로 정렬
             similarities.sort(key=lambda x: x[0], reverse=True)
@@ -1313,6 +1316,8 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                 best_person_id = best_match["id"]
                 base_sim = max_similarity  # fallback에서는 base_sim으로 간주
                 masked_sim = 0.0
+            else:
+                best_match = None
         
         # best_match가 None인 경우 처리 (suspect_ids 모드 또는 전체 DB 검색 실패)
         if not best_match:
@@ -2285,17 +2290,17 @@ async def get_logs(limit: int = 100, db: Session = Depends(get_db)):
 async def enroll_person(
     person_id: str = Form(...),
     name: str = Form(...),
-    is_criminal: bool = Form(False),
+    person_type: str = Form("criminal"),  # "criminal" 또는 "missing"
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
     """
-    용의자 등록 API - 정면 사진에서 얼굴 임베딩 추출 및 저장
+    인물 등록 API - 정면 사진에서 얼굴 임베딩 추출 및 저장
     
     Args:
-        person_id: 인물 고유 ID (예: "hong", "criminal")
+        person_id: 인물 고유 ID (자동 생성됨)
         name: 인물 이름
-        is_criminal: 범죄자 여부
+        person_type: 인물 타입 ("criminal" 또는 "missing")
         image: 정면 사진 파일 (JPEG, PNG 등)
         db: 데이터베이스 세션
     
@@ -2311,7 +2316,9 @@ async def enroll_person(
     global persons_cache, gallery_base_cache, gallery_masked_cache
     
     try:
-        print(f"📝 [ENROLL] 용의자 등록 요청: person_id={person_id}, name={name}, is_criminal={is_criminal}")
+        # is_criminal 결정 (criminal=True, missing=False)
+        is_criminal = (person_type == "criminal")
+        print(f"📝 [ENROLL] 인물 등록 요청: person_id={person_id}, name={name}, type={person_type}, is_criminal={is_criminal}")
         
         # 이미지 파일 읽기
         image_bytes = await image.read()
