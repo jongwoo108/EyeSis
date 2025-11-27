@@ -18,6 +18,8 @@ _ensure_cuda_in_path()
 from insightface.app import FaceAnalysis
 from src.utils.device_config import get_device_id, safe_prepare_insightface
 from src.face_enroll import get_main_face_embedding, l2_normalize
+from src.utils.face_angle_detector import estimate_face_angle
+import cv2
 
 # 설정
 ENROLL_DIR = PROJECT_ROOT / "images" / "enroll"
@@ -27,8 +29,8 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".JPG", ".JPEG", ".PNG", ".BMP"}
 
 # 각도별 파일명 패턴
 ANGLE_PATTERNS = {
-    "left": ["left", "_l", "_L"],
-    "right": ["right", "_r", "_R"],
+    "left": ["left", "_l", "_L", "fleft"],  # fleft = front-left (정면이면서 왼쪽)
+    "right": ["right", "_r", "_R", "fright"],  # fright = front-right (정면이면서 오른쪽)
     "top": ["top", "_t", "_T", "up", "_u", "_U"]
 }
 
@@ -44,6 +46,13 @@ def detect_angle_from_filename(filename: str) -> str:
         각도 타입: "left", "right", "top", 또는 "front" (기본값)
     """
     filename_lower = filename.lower()
+    
+    # fleft, fright는 우선적으로 처리 (front-left, front-right)
+    # frignt는 fright의 오타로 보이지만 인식하도록 처리
+    if "fleft" in filename_lower:
+        return "left"  # front-left는 left 카테고리로 분류
+    if "fright" in filename_lower or "frignt" in filename_lower:
+        return "right"  # front-right는 right 카테고리로 분류
     
     for angle, patterns in ANGLE_PATTERNS.items():
         for pattern in patterns:
@@ -131,6 +140,14 @@ def extract_angle_embeddings():
             "embeddings": {}
         }
         
+        # 각도 정보 저장용 (평가 시 사용)
+        angles_info = {
+            "angle_types": [],
+            "yaw_angles": [],
+            "pitch_angles": [],
+            "file_mapping": []  # 각 임베딩이 어떤 파일에서 왔는지
+        }
+        
         for angle_type, img_files in angle_groups.items():
             if not img_files:
                 continue
@@ -138,17 +155,100 @@ def extract_angle_embeddings():
             print(f"\n  📐 {angle_type.upper()} 각도 ({len(img_files)}개 파일):")
             
             embeddings_list = []
+            angle_data_list = []  # 각 이미지의 각도 정보
             
             for img_file in img_files:
                 print(f"    ▶ {img_file.name}")
-                embedding = get_main_face_embedding(app, img_file)
                 
-                if embedding is None:
+                # 이미지 로드 및 얼굴 감지
+                img = cv2.imread(str(img_file))
+                if img is None:
+                    print(f"      ❌ 이미지 읽기 실패")
+                    continue
+                
+                faces = app.get(img)
+                if len(faces) == 0:
+                    # 전처리 후 재시도
+                    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                    l = clahe.apply(l)
+                    enhanced = cv2.merge([l, a, b])
+                    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+                    faces = app.get(enhanced)
+                    
+                    if len(faces) == 0:
+                        h, w = img.shape[:2]
+                        if h < 1280 or w < 1280:
+                            scale = max(1280 / h, 1280 / w)
+                            new_h, new_w = int(h * scale), int(w * scale)
+                            upscaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                            faces = app.get(upscaled)
+                            
+                            # 업스케일링 후에도 실패하면 전처리 + 업스케일링 조합 시도
+                            if len(faces) == 0:
+                                upscaled_enhanced = cv2.resize(enhanced, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                                faces = app.get(upscaled_enhanced)
+                
+                if len(faces) == 0:
                     print(f"      ❌ 얼굴 감지 실패")
                     continue
                 
-                embeddings_list.append(embedding)
-                print(f"      ✅ 임베딩 추출 완료")
+                # 가장 큰 얼굴 선택
+                faces_sorted = sorted(
+                    faces,
+                    key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+                    reverse=True
+                )
+                main_face = faces_sorted[0]
+                
+                # 임베딩 추출
+                emb = main_face.embedding.astype("float32")
+                emb = l2_normalize(emb)
+                embeddings_list.append(emb)
+                
+                # 각도 측정
+                detected_angle_type, yaw_angle = estimate_face_angle(main_face)
+                
+                # Pitch 각도도 계산 (estimate_face_angle 내부 로직 사용)
+                kps = main_face.kps
+                left_eye = kps[0]
+                right_eye = kps[1]
+                nose = kps[2]
+                left_mouth = kps[3]
+                right_mouth = kps[4]
+                
+                eye_center_y = (left_eye[1] + right_eye[1]) / 2
+                mouth_center_y = (left_mouth[1] + right_mouth[1]) / 2
+                eye_to_mouth_distance = abs(mouth_center_y - eye_center_y)
+                eye_to_nose_distance = abs(nose[1] - eye_center_y)
+                
+                if eye_to_mouth_distance > 1e-6:
+                    nose_ratio = eye_to_nose_distance / eye_to_mouth_distance
+                    pitch_angle = (0.5 - nose_ratio) * 90.0
+                else:
+                    pitch_angle = 0.0
+                
+                angle_data_list.append({
+                    "file": img_file.name,
+                    "detected_angle_type": detected_angle_type,
+                    "yaw_angle": float(yaw_angle),
+                    "pitch_angle": float(pitch_angle),
+                    "file_angle_type": angle_type  # 파일명 기반 각도
+                })
+                
+                angles_info["angle_types"].append(angle_type)
+                angles_info["yaw_angles"].append(float(yaw_angle))
+                angles_info["pitch_angles"].append(float(pitch_angle))
+                angles_info["file_mapping"].append({
+                    "file": img_file.name,
+                    "angle_type": angle_type,
+                    "detected_angle_type": detected_angle_type,
+                    "yaw": float(yaw_angle),
+                    "pitch": float(pitch_angle)
+                })
+                
+                print(f"      ✅ 임베딩 추출 완료 (각도: {detected_angle_type}, yaw: {yaw_angle:.1f}°, pitch: {pitch_angle:.1f}°)")
             
             if embeddings_list:
                 # 여러 임베딩의 평균 (centroid)
@@ -168,13 +268,20 @@ def extract_angle_embeddings():
                 bank_file = person_output_dir / f"bank_{angle_type}.npy"
                 np.save(bank_file, embeddings_array)
                 
+                # 각도 정보 저장 (평가 시 사용)
+                angles_file = person_output_dir / "angles_manual.json"
+                with open(angles_file, 'w', encoding='utf-8') as f:
+                    json.dump(angles_info, f, indent=2, ensure_ascii=False)
+                
                 person_results["embeddings"][angle_type] = {
                     "file": str(embedding_file.relative_to(PROJECT_ROOT)),
                     "count": len(embeddings_list),
-                    "centroid_norm": float(np.linalg.norm(centroid))
+                    "centroid_norm": float(np.linalg.norm(centroid)),
+                    "angles": angle_data_list
                 }
                 
                 print(f"    💾 저장 완료: {embedding_file.name} ({len(embeddings_list)}개 임베딩)")
+                print(f"    💾 각도 정보 저장: {angles_file.name}")
         
         all_results[person_id] = person_results
     

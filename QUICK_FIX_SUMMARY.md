@@ -65,3 +65,4 @@ MASKED_CANDIDATE_MIN_FRAMES = 2  # 더 낮춤
 
 
 
+

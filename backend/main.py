@@ -1226,13 +1226,17 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         # Base Bank, Masked Bank, Dynamic Bank 각각 매칭 (분리 계산)
         base_sim = 0.0
         masked_sim = 0.0
-        dynamic_sim = 0.0
+        # Bank 매칭 결과 초기화
         best_base_person_id = "unknown"
         best_mask_person_id = "unknown"
         best_dynamic_person_id = "unknown"
-        second_base_sim = -1.0
-        second_mask_sim = -1.0
-        second_dynamic_sim = -1.0
+        base_sim = 0.0
+        masked_sim = 0.0
+        dynamic_sim = 0.0
+        second_base_sim = 0.0
+        second_mask_sim = 0.0
+        second_dynamic_sim = 0.0
+        bank_type = "unknown"  # ← 초기화 추가!
         
         # suspect_ids가 지정된 경우: 선택된 용의자들만 검색 (전체 DB 검색 안 함)
         if suspect_ids:

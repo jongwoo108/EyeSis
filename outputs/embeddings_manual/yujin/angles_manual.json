@@ -1,0 +1,20 @@
+{
+  "angle_types": [
+    "front"
+  ],
+  "yaw_angles": [
+    -3.1476469850208924
+  ],
+  "pitch_angles": [
+    -10.029751100024061
+  ],
+  "file_mapping": [
+    {
+      "file": "yujin.jpg",
+      "angle_type": "front",
+      "detected_angle_type": "front",
+      "yaw": -3.1476469850208924,
+      "pitch": -10.029751100024061
+    }
+  ]
+}

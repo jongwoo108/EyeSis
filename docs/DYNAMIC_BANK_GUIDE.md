@@ -237,3 +237,4 @@ rm outputs/embeddings/{person_id}/collection_status.json
 
 **마지막 업데이트**: 2024-01-15
 
+
