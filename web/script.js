@@ -3,12 +3,14 @@
 // ==========================================
 // 전역 변수 및 상태 관리
 // ==========================================
-const API_BASE_URL = 'http://localhost:5000/api';
-const WS_URL = 'ws://localhost:5000/ws/detect';
-const WS_TEST_URL = 'ws://localhost:5000/ws/test'; // 테스트용
+// 상대 경로 사용 (ngrok 사용 시 자동으로 도메인 적용됨)
+const API_BASE_URL = '/api';
+const WS_URL = `ws${window.location.protocol === 'https:' ? 's' : ''}://${window.location.host}/ws/detect`;
+const WS_TEST_URL = `ws${window.location.protocol === 'https:' ? 's' : ''}://${window.location.host}/ws/test`; // 테스트용
 
 const state = {
     selectedFile: null,
+    videoUploaded: false, // 영상 업로드 여부
     selectedSuspects: [], // 여러 명 선택 가능 (배열)
     isDetectionActive: false,
     detectionInterval: null,
@@ -39,23 +41,33 @@ const state = {
 
 // DOM 요소
 const UI = {
-    screens: {
-        upload: document.getElementById('uploadScreen'),
-        suspect: document.getElementById('suspectSelectScreen'),
-        dashboard: document.getElementById('dashboardScreen')
-    },
+    // 메인 화면
+    dashboard: document.getElementById('dashboardScreen'),
+    emptyStateCard: document.getElementById('emptyStateCard'),
+    // 모달
+    uploadModal: document.getElementById('uploadModal'),
+    suspectSelectModal: document.getElementById('suspectSelectModal'),
+    // 헤더 버튼
+    openUploadModalBtn: document.getElementById('openUploadModalBtn'),
+    openSuspectModalBtn: document.getElementById('openSuspectModalBtn'),
+    // 모달 닫기 버튼
+    closeUploadModal: document.getElementById('closeUploadModal'),
+    closeSuspectModal: document.getElementById('closeSuspectModal'),
+    // 비디오 관련
     video: document.getElementById('mainVideo'),
     detectionCanvas: document.getElementById('detectionCanvas'),
     videoFile: document.getElementById('videoFile'),
     analyzeBtn: document.getElementById('analyzeBtn'),
     fileInfo: document.getElementById('fileInfo'),
     fileName: document.getElementById('fileName'),
+    // 인물 선택
     suspectCardsContainer: document.getElementById('suspectCardsContainer'),
     proceedBtn: document.getElementById('proceedToDashboard'),
-    detectionFilter: document.getElementById('detectionFilter'),
-    detectionInfo: document.getElementById('detectionInfo'),
     selectedSuspectName: document.getElementById('selectedSuspectName'),
     selectedSuspectInfo: document.getElementById('selectedSuspectInfo'),
+    // 제어
+    detectionFilter: document.getElementById('detectionFilter'),
+    detectionInfo: document.getElementById('detectionInfo'),
     // 용의자 추가 모달
     addSuspectModal: document.getElementById('addSuspectModal'),
     addSuspectBtn: document.getElementById('addSuspectBtn'),
@@ -122,7 +134,7 @@ function createSuspectCard(person) {
 
     // 이미지 URL이 있으면 사용, 없으면 기본 이모지
     const imageUrl = person.image_url || null;
-    const imageHtml = imageUrl 
+    const imageHtml = imageUrl
         ? `<img src="${imageUrl}" alt="${displayName}" class="w-full h-full object-cover" onerror="this.parentElement.innerHTML='<span class=\\'text-6xl\\'>👤</span>'">`
         : `<span class="text-6xl">👤</span>`;
 
@@ -247,7 +259,7 @@ function initCaptureCanvas() {
     // 비디오 크기 변경 시 캔버스 크기 조정
     UI.video.addEventListener('loadedmetadata', updateCanvasSize);
     window.addEventListener('resize', updateCanvasSize);
-    
+
     // 비디오 재생 시 AI 감지 자동 활성화
     UI.video.addEventListener('play', () => {
         // 비디오가 재생되면 AI 감지 자동 활성화
@@ -255,17 +267,17 @@ function initCaptureCanvas() {
             console.log("▶️ 비디오 재생 감지, AI 감지 자동 활성화");
             UI.detectionFilter.checked = true;
             state.isDetectionActive = true;
-            
+
             // 처리 상태 초기화
             state.isProcessing = false;
-            
+
             // WebSocket 연결 시도 (백그라운드에서 연결 시도)
             if (state.useWebSocket && !state.isWsConnected) {
                 connectWebSocket();
                 // WebSocket 연결 완료 및 설정 완료 후 자동으로 WebSocket으로 전환됨
                 // 하지만 연결 완료 전까지는 HTTP로 즉시 시작
             }
-            
+
             // WebSocket 연결 상태와 관계없이 HTTP로 즉시 시작 (WebSocket 준비되면 자동 전환)
             // 이렇게 하면 화면 전환 직후에도 통신이 바로 시작됨
             console.log("🚀 HTTP 모드로 감지 시작 (WebSocket 준비되면 자동 전환)");
@@ -273,7 +285,7 @@ function initCaptureCanvas() {
             state.detectionInterval = setInterval(processRealtimeDetection, 100);
         }
     });
-    
+
     // 비디오 종료 시 감지 루프 자동 중지
     UI.video.addEventListener('ended', () => {
         if (state.isDetectionActive) {
@@ -283,7 +295,7 @@ function initCaptureCanvas() {
                 UI.detectionFilter.checked = false;
             }
             clearInterval(state.detectionInterval);
-            
+
             // 현재 감지 중인 클립 종료
             if (state.currentClip) {
                 const endTime = UI.video.currentTime;
@@ -293,14 +305,14 @@ function initCaptureCanvas() {
                 state.currentClip = null;
                 updateClipCount();
             }
-            
+
             // WebSocket 재연결 중지
             if (state.wsReconnectTimer) {
                 clearTimeout(state.wsReconnectTimer);
                 state.wsReconnectTimer = null;
                 console.log("⏹️ WebSocket 재연결 중지 (비디오 종료)");
             }
-            
+
             updateDetectionPanel({ message: "비디오 종료됨" });
         }
     });
@@ -332,7 +344,7 @@ function addTimelineMarkerDirect(snapshot) {
         videoTime: snapshot.videoTime,
         snapshotId: snapshot.id
     });
-    
+
     if (!UI.video || !UI.video.duration || UI.video.duration === 0 || isNaN(UI.video.duration)) {
         console.warn('⚠️ 비디오 duration이 아직 설정되지 않음, 재시도 예약');
         // 비디오가 아직 로드되지 않았으면 나중에 다시 시도
@@ -355,14 +367,14 @@ function addTimelineMarkerDirect(snapshot) {
     const marker = document.createElement('div');
     marker.className = 'absolute w-3 h-full bg-red-500 cursor-pointer hover:bg-red-700 transition-colors z-10';
     marker.style.left = `${position}%`;
-    
+
     // 시간 포맷 헬퍼
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
-    
+
     marker.title = `${snapshot.personName} - ${formatTime(snapshot.videoTime)}`;
     marker.dataset.snapshotId = snapshot.id;
 
@@ -383,7 +395,7 @@ function updateSnapshotCountDirect() {
     console.log('🔢 updateSnapshotCountDirect 호출됨:', {
         snapshotCount: state.snapshots.length
     });
-    
+
     const countEl = document.getElementById('snapshotCount');
     if (countEl) {
         countEl.textContent = state.snapshots.length;
@@ -449,7 +461,7 @@ async function downloadVideoClip(clip) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
+
         console.log(`✅ 클립 다운로드 완료: ${clip.personName}`);
     } catch (error) {
         console.error('❌ 클립 다운로드 실패:', error);
@@ -696,26 +708,26 @@ async function testWebSocketConnection() {
     return new Promise((resolve) => {
         console.log(`🧪 WebSocket 연결 테스트: ${WS_TEST_URL}`);
         const testWs = new WebSocket(WS_TEST_URL);
-        
+
         const timeout = setTimeout(() => {
             testWs.close();
             console.log("❌ WebSocket 테스트 타임아웃");
             resolve(false);
         }, 3000);
-        
+
         testWs.onopen = () => {
             clearTimeout(timeout);
             console.log("✅ WebSocket 테스트 연결 성공!");
             testWs.close();
             resolve(true);
         };
-        
+
         testWs.onerror = (error) => {
             clearTimeout(timeout);
             console.log("❌ WebSocket 테스트 연결 실패");
             resolve(false);
         };
-        
+
         testWs.onclose = () => {
             clearTimeout(timeout);
         };
@@ -758,7 +770,7 @@ function connectWebSocket() {
             }, 2000);
             return;
         }
-        
+
         // WebSocket 연결 테스트 (선택적)
         const wsTestResult = await testWebSocketConnection();
         if (!wsTestResult) {
@@ -772,7 +784,7 @@ function connectWebSocket() {
         console.log(`🔌 WebSocket 연결 시도: ${WS_URL}`);
         // WebSocket 연결 생성 (프로토콜 없이)
         const ws = new WebSocket(WS_URL);
-        
+
         // 연결 타임아웃 설정 (5초)
         const connectionTimeout = setTimeout(() => {
             if (ws.readyState === WebSocket.CONNECTING) {
@@ -802,7 +814,7 @@ function connectWebSocket() {
                 // 선택된 용의자가 없어도 설정 완료로 표시 (전체 DB 검색)
                 state.wsConfigReady = true;
                 console.log("✅ WebSocket 설정 완료 (용의자 미선택 - 전체 검색)");
-                
+
                 // 설정 완료 후 첫 프레임 전송 (감지 활성화 상태일 때만)
                 if (state.isDetectionActive) {
                     setTimeout(() => {
@@ -836,7 +848,7 @@ function connectWebSocket() {
             }
             state.isWsConnected = false;
             state.wsConfigReady = false;
-            
+
             // WebSocket 연결 실패 시 즉시 HTTP 모드로 전환 (재연결 시도 최소화)
             if (state.wsReconnectAttempts < 2) {
                 // 처음 2번만 재시도, 그 이후로는 HTTP 모드로 전환
@@ -863,7 +875,7 @@ function connectWebSocket() {
                 console.log("   종료 코드:", event.code);
                 console.log("   종료 사유:", event.reason || "없음");
             }
-            
+
             state.isWsConnected = false;
             state.wsConfigReady = false; // 설정 플래그도 초기화
             state.ws = null;
@@ -988,7 +1000,7 @@ function sendWebSocketFrame(frameData, suspectIds) {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         // suspectIds가 null이어도 빈 배열로 전송 (항상 포함)
         const ids = suspectIds || [];
-        
+
         state.frameId++;
         state.ws.send(JSON.stringify({
             type: "frame",
@@ -1005,7 +1017,7 @@ function sendWebSocketFrame(frameData, suspectIds) {
 
 function handleWebSocketMessage(message) {
     const msgType = message.type;
-    
+
     console.log('📨 WebSocket 메시지 수신:', msgType);
 
     if (msgType === "detection") {
@@ -1022,17 +1034,17 @@ function handleWebSocketMessage(message) {
             metadata: data.metadata,
             videoTimestamp: data.video_timestamp
         });
-        
+
         // detections 배열에서 범죄자 확인
         if (data.detections && data.detections.length > 0) {
             const criminals = data.detections.filter(d => d.status === 'criminal');
             console.log(`👮 범죄자 감지: ${criminals.length}명`, criminals.map(c => c.name));
         }
-        
+
         if (data.alert) {
             // 정확한 비디오 타임스탬프 사용 (백엔드 계산값보다 정확)
             const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (data.video_timestamp || 0);
-            
+
             // 클립 추적: 범죄자 감지 시작
             if (!state.currentClip) {
                 state.currentClip = {
@@ -1049,7 +1061,7 @@ function handleWebSocketMessage(message) {
                 // 같은 사람이 계속 감지되면 클립 업데이트
                 state.currentClip.endTime = videoTime; // 종료 시간 갱신
             }
-            
+
             // 스냅샷이 없으면 현재 프레임을 직접 캡처하여 사용
             let snapshotImage = data.snapshot_base64;
             if (!snapshotImage) {
@@ -1061,7 +1073,7 @@ function handleWebSocketMessage(message) {
                     console.log('✅ 현재 프레임을 캡처하여 스냅샷으로 사용합니다.');
                 }
             }
-            
+
             if (snapshotImage) {
                 const snapshot = {
                     id: state.nextSnapshotId++,
@@ -1075,7 +1087,7 @@ function handleWebSocketMessage(message) {
                 };
                 state.snapshots.push(snapshot);
                 console.log(`✅ 스냅샷 저장됨: #${snapshot.id} - ${snapshot.personName} (${snapshot.videoTime.toFixed(1)}s), 총 ${state.snapshots.length}개`);
-                
+
                 // 타임라인 마커 추가 및 카운트 업데이트 (직접 구현)
                 console.log('📌 타임라인 마커 추가 시도...');
                 addTimelineMarkerDirect(snapshot);
@@ -1129,7 +1141,7 @@ function handleWebSocketMessage(message) {
     } else if (msgType === "config_updated") {
         console.log("✅ 설정 업데이트됨:", message.suspect_ids);
         state.wsConfigReady = true; // 설정 완료 플래그 설정
-        
+
         // 설정 완료 후 첫 프레임 전송 (감지 활성화 상태일 때만)
         if (state.isDetectionActive && !state.isProcessing) {
             console.log("🚀 WebSocket 설정 완료, 첫 프레임 전송 시작");
@@ -1178,10 +1190,10 @@ async function detectFrameToServerHTTP(frameData) {
                 snapshotLength: result.snapshot_base64 ? result.snapshot_base64.length : 0,
                 metadata: result.metadata
             });
-            
+
             if (result.alert) {
                 const videoTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : (result.video_timestamp || 0);
-                
+
                 // 클립 추적: 범죄자 감지 시작
                 if (!state.currentClip) {
                     state.currentClip = {
@@ -1198,7 +1210,7 @@ async function detectFrameToServerHTTP(frameData) {
                     // 같은 사람이 계속 감지되면 클립 업데이트
                     state.currentClip.endTime = videoTime; // 종료 시간 갱신
                 }
-                
+
                 // 스냅샷이 없으면 현재 프레임을 직접 캡처하여 사용
                 let snapshotImage = result.snapshot_base64;
                 if (!snapshotImage) {
@@ -1210,7 +1222,7 @@ async function detectFrameToServerHTTP(frameData) {
                         console.log('✅ 현재 프레임을 캡처하여 스냅샷으로 사용합니다.');
                     }
                 }
-                
+
                 if (snapshotImage) {
                     const snapshot = {
                         id: state.nextSnapshotId++,
@@ -1224,7 +1236,7 @@ async function detectFrameToServerHTTP(frameData) {
                     };
                     state.snapshots.push(snapshot);
                     console.log(`✅ 스냅샷 저장됨 (HTTP): #${snapshot.id} - ${snapshot.personName} (${snapshot.videoTime.toFixed(1)}s), 총 ${state.snapshots.length}개`);
-                    
+
                     // 타임라인 마커 추가 및 카운트 업데이트 (직접 구현)
                     console.log('📌 타임라인 마커 추가 시도 (HTTP)...');
                     addTimelineMarkerDirect(snapshot);
@@ -1286,7 +1298,7 @@ async function processRealtimeDetection() {
             state.isDetectionActive = false;
             UI.detectionFilter.checked = false;
             clearInterval(state.detectionInterval);
-            
+
             // 현재 감지 중인 클립 종료
             if (state.currentClip) {
                 const endTime = UI.video.currentTime;
@@ -1296,7 +1308,7 @@ async function processRealtimeDetection() {
                 state.currentClip = null;
                 updateClipCount();
             }
-            
+
             updateDetectionPanel({ message: "비디오 종료됨" });
         }
         return;
@@ -1378,10 +1390,18 @@ UI.videoFile.addEventListener('change', (e) => {
 
 UI.analyzeBtn.addEventListener('click', async () => {
     if (state.selectedFile) {
-        UI.screens.upload.classList.add('hidden');
-        UI.screens.suspect.classList.remove('hidden');
-        // 용의자 선택 화면이 표시될 때 인물 목록 로드
-        await renderSuspectCards();
+        // 모달 닫기
+        UI.uploadModal.classList.add('hidden');
+
+        // 비디오 로드
+        const videoURL = URL.createObjectURL(state.selectedFile);
+        UI.video.src = videoURL;
+
+        // 영상 업로드 상태 업데이트
+        state.videoUploaded = true;
+        updateDashboardView();
+
+        console.log("✅ 영상 파일 로드 완료:", state.selectedFile.name);
     }
 });
 
@@ -1457,12 +1477,12 @@ UI.enrollImage?.addEventListener('change', (e) => {
 // 폼 제출
 UI.addSuspectForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    
+
     const personId = UI.enrollPersonId.value.trim();
     const name = UI.enrollName.value.trim();
     const isCriminal = UI.enrollIsCriminal.checked;
     const imageFile = UI.enrollImage.files[0];
-    
+
     // 유효성 검사
     if (!personId || !name || !imageFile) {
         UI.enrollError.textContent = '모든 필드를 입력해주세요.';
@@ -1470,7 +1490,7 @@ UI.addSuspectForm?.addEventListener('submit', async (e) => {
         UI.enrollSuccess.classList.add('hidden');
         return;
     }
-    
+
     // person_id 유효성 검사 (영문, 숫자, 언더스코어만)
     if (!/^[a-zA-Z0-9_]+$/.test(personId)) {
         UI.enrollError.textContent = '인물 ID는 영문, 숫자, 언더스코어(_)만 사용 가능합니다.';
@@ -1478,42 +1498,42 @@ UI.addSuspectForm?.addEventListener('submit', async (e) => {
         UI.enrollSuccess.classList.add('hidden');
         return;
     }
-    
+
     // FormData 생성
     const formData = new FormData();
     formData.append('person_id', personId);
     formData.append('name', name);
     formData.append('is_criminal', isCriminal);
     formData.append('image', imageFile);
-    
+
     // 버튼 비활성화
     UI.submitEnrollBtn.disabled = true;
     UI.submitEnrollBtn.textContent = '등록 중...';
     UI.enrollError.classList.add('hidden');
     UI.enrollSuccess.classList.add('hidden');
-    
+
     try {
         const response = await fetch(`${API_BASE_URL}/enroll`, {
             method: 'POST',
             body: formData
         });
-        
+
         const data = await response.json();
-        
+
         if (response.ok && data.success) {
             // 성공 메시지 표시
             UI.enrollSuccess.textContent = data.message || `등록 완료: ${name} (${personId})`;
             UI.enrollSuccess.classList.remove('hidden');
             UI.enrollError.classList.add('hidden');
-            
+
             // 폼 리셋
             UI.addSuspectForm.reset();
             UI.imagePreview.classList.add('hidden');
             UI.imagePlaceholder.classList.remove('hidden');
-            
+
             // 인물 목록 즉시 새로고침
             await renderSuspectCards();
-            
+
             // 2초 후 모달 닫기
             setTimeout(() => {
                 UI.addSuspectModal.classList.add('hidden');
@@ -1543,24 +1563,23 @@ UI.addSuspectForm?.addEventListener('submit', async (e) => {
 
 UI.proceedBtn.addEventListener('click', () => {
     if (state.selectedSuspects.length > 0) {
-        // 화면 전환: 용의자 선택 화면 → 대시보드 화면
-        UI.screens.suspect.classList.add('hidden');
-        UI.screens.dashboard.classList.remove('hidden');
+        // 모달 닫기
+        UI.suspectSelectModal.classList.add('hidden');
 
-        // 세션 ID 생성 (타임스탬프 기반)
+        // 새가 ID 생성 (타임스탬프 기반)
         state.sessionId = `session_${Date.now()}`;
         console.log(`세션 ID: ${state.sessionId}`);
 
         // 스냅샷 배열 초기화
         state.snapshots = [];
         state.nextSnapshotId = 1;
-        
+
         // 타임라인 초기화
         const timelineBar = document.getElementById('timelineBar');
         if (timelineBar) {
             timelineBar.innerHTML = '';
         }
-        
+
         // 스냅샷 카운트 초기화
         updateSnapshotCountDirect();
 
@@ -1573,7 +1592,7 @@ UI.proceedBtn.addEventListener('click', () => {
 
         // 동영상 재생 시작
         UI.video.play();
-        
+
         // 프레임 추출 버튼 활성화
         if (UI.extractFramesBtn) {
             UI.extractFramesBtn.disabled = false;
@@ -1595,39 +1614,39 @@ UI.extractFramesBtn?.addEventListener('click', async () => {
         alert('비디오 파일이 선택되지 않았습니다.');
         return;
     }
-    
+
     // 확인 대화상자
     const confirmExtract = confirm(
         '모든 프레임을 추출하시겠습니까?\n\n' +
         '이 작업은 시간이 걸릴 수 있으며, 많은 프레임이 생성될 수 있습니다.'
     );
-    
+
     if (!confirmExtract) {
         return;
     }
-    
+
     // 버튼 비활성화 및 상태 변경
     UI.extractFramesBtn.disabled = true;
     UI.extractFramesBtn.textContent = '추출 중...';
-    
+
     try {
         // FormData 생성
         const formData = new FormData();
         formData.append('video', state.selectedFile);
-        
+
         // 서버로 요청
         const response = await fetch(`${API_BASE_URL}/extract_frames`, {
             method: 'POST',
             body: formData
         });
-        
+
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.detail || `서버 오류: ${response.status}`);
         }
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
             alert(
                 `프레임 추출 완료!\n\n` +
@@ -1650,22 +1669,22 @@ UI.extractFramesBtn?.addEventListener('click', async () => {
 
 UI.detectionFilter.addEventListener('change', (e) => {
     state.isDetectionActive = e.target.checked;
-    
+
     if (state.isDetectionActive) {
         // 감지 시작
         console.log("🚀 AI 감지 시작");
         updateDetectionPanel({ message: "AI 분석 시작..." });
-        
+
         // 처리 상태 초기화 (이전 요청이 완료되지 않았을 수 있음)
         state.isProcessing = false;
-        
+
         // WebSocket 연결 시도 (백그라운드에서 연결, 연결 완료되면 자동 전환)
         if (state.useWebSocket && !state.isWsConnected) {
             connectWebSocket();
             // WebSocket 연결 완료 및 설정 완료 후 자동으로 WebSocket으로 전환됨
             // 하지만 연결 완료 전까지는 HTTP로 즉시 시작
         }
-        
+
         // 비디오가 로드되었는지 확인
         if (UI.video.readyState < 2) {
             console.warn("⚠️ 비디오가 아직 로드되지 않았습니다. 비디오 로드 대기 중...");
@@ -1687,7 +1706,7 @@ UI.detectionFilter.addEventListener('change', (e) => {
         console.log("⏹️ AI 감지 중지");
         clearInterval(state.detectionInterval);
         // disconnectWebSocket(); // 연결은 유지하여 재시작 시 딜레이 제거
-        
+
         // 현재 감지 중인 클립 종료
         if (state.currentClip) {
             const endTime = UI.video && !isNaN(UI.video.currentTime) ? UI.video.currentTime : 0;
@@ -1698,7 +1717,7 @@ UI.detectionFilter.addEventListener('change', (e) => {
             // 클립 개수 업데이트
             updateClipCount();
         }
-        
+
         // 캔버스 클리어
         if (state.detectionCtx) {
             state.detectionCtx.clearRect(0, 0, state.detectionCanvas.width, state.detectionCanvas.height);
@@ -1728,3 +1747,80 @@ function updateDetectionPanel(data, isAlert) {
         </div>
     `;
 }
+
+// ==========================================
+// 초기화 및 모달 이벤트
+// ==========================================
+
+// 대시보드 화면 업데이트 (빈 화면 vs 영상 화면)
+function updateDashboardView() {
+    if (state.videoUploaded) {
+        // 영상이 있으면 빈 상태 카드 숨김
+        UI.emptyStateCard.classList.add('hidden');
+    } else {
+        // 영상이 없으면 빈 상태 카드 표시
+        UI.emptyStateCard.classList.remove('hidden');
+    }
+}
+
+// 파일 업로드 모달 열기
+UI.emptyStateCard?.addEventListener('click', () => {
+    UI.uploadModal.classList.remove('hidden');
+});
+
+UI.openUploadModalBtn?.addEventListener('click', () => {
+    UI.uploadModal.classList.remove('hidden');
+});
+
+// 파일 업로드 모달 닫기
+UI.closeUploadModal?.addEventListener('click', () => {
+    UI.uploadModal.classList.add('hidden');
+});
+
+// 인물 선택 모달 열기
+UI.openSuspectModalBtn?.addEventListener('click', async () => {
+    UI.suspectSelectModal.classList.remove('hidden');
+    // 모달 열 때마다 인물 목록 갱신
+    await renderSuspectCards();
+});
+
+// 인물 선택 모달 닫기
+UI.closeSuspectModal?.addEventListener('click', () => {
+    UI.suspectSelectModal.classList.add('hidden');
+});
+
+// 모달 외부 클릭 시 닫기
+UI.uploadModal?.addEventListener('click', (e) => {
+    if (e.target === UI.uploadModal) {
+        UI.uploadModal.classList.add('hidden');
+    }
+});
+
+UI.suspectSelectModal?.addEventListener('click', (e) => {
+    if (e.target === UI.suspectSelectModal) {
+        UI.suspectSelectModal.classList.add('hidden');
+    }
+});
+
+// ESC 키로 모달 닫기
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (!UI.uploadModal.classList.contains('hidden')) {
+            UI.uploadModal.classList.add('hidden');
+        }
+        if (!UI.suspectSelectModal.classList.contains('hidden')) {
+            UI.suspectSelectModal.classList.add('hidden');
+        }
+        if (!UI.addSuspectModal.classList.contains('hidden')) {
+            UI.addSuspectModal.classList.add('hidden');
+        }
+    }
+});
+
+// 초기 화면 설정
+updateDashboardView();
+
+// 캔버스 초기화
+initCaptureCanvas();
+
+console.log("✅ FaceWatch 프론트엔드 초기화 완료");

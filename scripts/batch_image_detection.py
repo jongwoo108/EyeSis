@@ -23,8 +23,8 @@ from backend.database import SessionLocal, get_db
 from backend.main import process_detection, load_persons_from_db
 
 # 설정
-TEST_IMAGE_DIR = PROJECT_ROOT / "images" / "test"
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "test_results_base_only"  # Base Bank만 사용 모드
+TEST_IMAGE_DIR = PROJECT_ROOT / "images" / "test_easy"
+OUTPUT_DIR = PROJECT_ROOT / "outputs" / "test_results_base_only_easy"  # Base Bank만 사용 모드
 OUTPUT_IMAGES_DIR = OUTPUT_DIR / "images"
 OUTPUT_JSON_DIR = OUTPUT_DIR / "annotations"
 

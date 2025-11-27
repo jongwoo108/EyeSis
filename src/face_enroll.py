@@ -173,10 +173,20 @@ def mode_basic_enroll(app: FaceAnalysis, enroll_root: Path, out_dir: Path,
         person_id = person_dir.name
         print(f"\n===== {person_id} 등록 시작 =====")
         
+        # yh, ja, js, jw는 정면사진만 추출
+        FRONTAL_ONLY_PERSONS = {"yh", "ja", "js", "jw"}
+        
         emb_list = []
         for img_path in sorted(person_dir.glob("*")):
             if img_path.suffix.lower() not in IMG_EXTS:
                 continue
+            
+            # 정면사진만 추출할 인물인 경우
+            if person_id in FRONTAL_ONLY_PERSONS:
+                # 파일명이 정확히 "<person_id>.jpeg"인 경우만 처리
+                if img_path.name != f"{person_id}.jpeg":
+                    print(f"  ⏭️ 스킵 (정면사진만 추출): {img_path.name}")
+                    continue
             
             print(f"  ▶ 이미지 처리: {img_path.name}")
             emb = get_main_face_embedding(app, img_path)

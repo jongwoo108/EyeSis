@@ -2039,6 +2039,7 @@ async def websocket_detect(websocket: WebSocket):
                         bank_type = event.get("bank_type", "base")
                         
                         # 동적 bank 저장 (각도별 다양성 체크 및 수집 완료 로직 포함)
+                        # ⚠️ Dynamic Bank 자동 수집 활성화
                         if bank_type == "dynamic":
                             # 파일 저장은 백그라운드에서 비동기 처리 (응답 지연 없음)
                             asyncio.create_task(add_embedding_to_dynamic_bank_async(
@@ -2049,7 +2050,7 @@ async def websocket_detect(websocket: WebSocket):
                                 similarity_threshold=0.95,
                                 verbose=True
                             ))
-                        else:
+                        else: # Dynamic이 아니면 Masked/Base 처리
                             # 기존 masked/base bank 저장 (호환성 유지)
                             asyncio.create_task(add_embedding_to_bank_async(
                                 event["person_id"],
@@ -2759,5 +2760,13 @@ async def extract_clip(
                 os.unlink(input_path)
         except:
             pass
+
+# ==========================================
+# Static Files 마운트 (프론트엔드 서빙)
+# ==========================================
+# web 폴더의 정적 파일들을 루트 경로로 서빙
+# 이렇게 하면 ngrok으로 외부 접속 시에도 하나의 URL로 통합 가능
+web_dir = PROJECT_ROOT / "web"
+app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="static")
 
 # 실행 명령: uvicorn backend.main:app --reload --host 0.0.0.0 --port 5000

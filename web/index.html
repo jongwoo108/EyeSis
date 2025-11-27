@@ -7,160 +7,27 @@
     <title>CCTV 용의자 식별 서비스</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👤</text></svg>">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👤</text></svg>">
 </head>
 
 <body class="bg-gray-100 min-h-screen">
 
-    <div id="uploadScreen" class="min-h-screen flex items-center justify-center">
-        <div class="upload-container max-w-md w-full mx-auto p-8 rounded-2xl shadow-2xl">
-            <div class="text-center mb-8">
-                <h1 class="text-4xl font-bold text-blue-800 mb-2">CCTV 영상 분석기</h1>
-                <p class="text-gray-600">용의자 식별 시스템</p>
-            </div>
-
-            <div class="space-y-6">
-                <div
-                    class="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
-                    <label for="videoFile" class="block text-lg font-medium text-blue-700 mb-2 cursor-pointer">
-                        CCTV 영상 파일 선택
-                    </label>
-                    <input type="file" id="videoFile" accept="video/*" class="hidden">
-                    <p class="text-sm text-gray-500">MP4, AVI, MOV 등 지원</p>
-                </div>
-
-                <div id="fileInfo" class="hidden bg-green-50 border border-green-200 rounded-lg p-3">
-                    <p class="text-green-700 text-sm font-medium">선택된 파일: <span id="fileName"></span></p>
-                </div>
-
-                <button id="analyzeBtn"
-                    class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled>
-                    분석 시작
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <div id="suspectSelectScreen" class="hidden min-h-screen bg-gray-50">
-        <div class="container mx-auto py-8">
-            <div class="max-w-4xl mx-auto">
-                <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold text-gray-800 mb-2">용의자 데이터베이스</h1>
-                    <p class="text-gray-600">감지할 대상을 선택해주세요</p>
-                </div>
-
-                <div class="text-center mb-6">
-                    <button id="addSuspectBtn"
-                        class="bg-green-600 text-white py-2 px-6 rounded-lg font-semibold hover:bg-green-700 transition-all duration-200 shadow-md">
-                        + 용의자 추가
-                    </button>
-                </div>
-
-                <div id="suspectCardsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    <!-- 인물 카드가 동적으로 생성됩니다 -->
-                    <div class="col-span-full text-center py-8 text-gray-500">
-                        <p>인물 목록을 불러오는 중...</p>
-                    </div>
-                </div>
-
-                <div id="selectedSuspectInfo" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                    <h4 class="font-bold text-blue-800 mb-2">선택된 대상:</h4>
-                    <div id="selectedSuspectName" class="text-gray-700"></div>
-                    <p class="text-sm text-gray-500 mt-2">여러 명을 선택하려면 카드를 클릭하세요</p>
-                </div>
-
-                <div class="text-center">
-                    <button id="proceedToDashboard"
-                        class="bg-blue-600 text-white py-3 px-8 rounded-lg text-lg font-semibold hover:bg-blue-700 disabled:opacity-50"
-                        disabled>
-                        모니터링 시작
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 용의자 추가 모달 -->
-    <div id="addSuspectModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-2xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div class="p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">용의자 등록</h2>
-                    <button id="closeAddSuspectModal" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
-                </div>
-
-                <form id="addSuspectForm" class="space-y-4">
-                    <div>
-                        <label for="enrollPersonId" class="block text-sm font-medium text-gray-700 mb-1">
-                            인물 ID <span class="text-red-500">*</span>
-                        </label>
-                        <input type="text" id="enrollPersonId" required
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="예: hong, criminal">
-                        <p class="text-xs text-gray-500 mt-1">영문, 숫자, 언더스코어만 사용 가능</p>
-                    </div>
-
-                    <div>
-                        <label for="enrollName" class="block text-sm font-medium text-gray-700 mb-1">
-                            이름 <span class="text-red-500">*</span>
-                        </label>
-                        <input type="text" id="enrollName" required
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="예: 홍길동">
-                    </div>
-
-                    <div>
-                        <label for="enrollImage" class="block text-sm font-medium text-gray-700 mb-1">
-                            정면 사진 <span class="text-red-500">*</span>
-                        </label>
-                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
-                            <input type="file" id="enrollImage" accept="image/*" required class="hidden">
-                            <label for="enrollImage" class="cursor-pointer">
-                                <div id="imagePreview" class="hidden mb-2">
-                                    <img id="previewImg" src="" alt="미리보기" class="max-w-full max-h-48 mx-auto rounded-lg">
-                                </div>
-                                <div id="imagePlaceholder" class="text-gray-500">
-                                    <svg class="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-                                    </svg>
-                                    <p>클릭하여 사진 선택</p>
-                                    <p class="text-xs mt-1">JPEG, PNG 등 지원</p>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="flex items-center">
-                        <input type="checkbox" id="enrollIsCriminal"
-                            class="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500">
-                        <label for="enrollIsCriminal" class="ml-2 text-sm font-medium text-gray-700">
-                            범죄자로 등록
-                        </label>
-                    </div>
-
-                    <div id="enrollError" class="hidden bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm"></div>
-                    <div id="enrollSuccess" class="hidden bg-green-50 border border-green-200 rounded-lg p-3 text-green-700 text-sm"></div>
-
-                    <div class="flex gap-3 pt-4">
-                        <button type="button" id="cancelEnrollBtn"
-                            class="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
-                            취소
-                        </button>
-                        <button type="submit" id="submitEnrollBtn"
-                            class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            등록
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div id="dashboardScreen" class="hidden min-h-screen">
+    <!-- 메인 대시보드 화면 (항상 표시) -->
+    <div id="dashboardScreen" class="min-h-screen">
         <header class="dashboard-header text-white p-4 shadow-lg">
-            <div class="container mx-auto">
+            <div class="container mx-auto flex justify-between items-center">
                 <h1 class="text-2xl font-bold">A 편의점 CCTV (정문입구)</h1>
+                <div class="flex gap-3">
+                    <button id="openUploadModalBtn"
+                        class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2">
+                        📁 영상 업로드
+                    </button>
+                    <button id="openSuspectModalBtn"
+                        class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2">
+                        👥 인물 선택
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -173,6 +40,25 @@
                     </div>
 
                     <div class="flex-1 bg-black rounded-lg overflow-hidden video-container relative h-[600px]">
+                        <!-- 빈 상태 (영상 없을 때만 표시) -->
+                        <div id="emptyStateCard"
+                            class="absolute inset-0 flex items-center justify-center bg-gray-900 z-20">
+                            <div class="text-center cursor-pointer hover:scale-105 transition-all duration-300">
+                                <svg class="w-32 h-32 mx-auto mb-6 text-blue-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z">
+                                    </path>
+                                </svg>
+                                <h2 class="text-3xl font-bold text-white mb-3">영상을 업로드하세요</h2>
+                                <p class="text-gray-400 mb-6">클릭하여 CCTV 영상 파일을 선택하거나<br>상단 "영상 업로드" 버튼을 이용하세요</p>
+                                <div class="text-sm text-gray-500">
+                                    <p>지원 형식: MP4, AVI, MOV</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 비디오 플레이어 -->
                         <video id="mainVideo" class="w-full h-full object-contain absolute inset-0" controls
                             playsinline></video>
                         <canvas id="detectionCanvas" class="w-full h-full object-contain absolute inset-0"
@@ -238,9 +124,168 @@
         </div>
     </div>
 
+    <!-- 파일 업로드 모달 -->
+    <div id="uploadModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="upload-container max-w-md w-full mx-4 p-8 rounded-2xl shadow-2xl">
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-3xl font-bold text-blue-800">CCTV 영상 분석기</h1>
+                <button id="closeUploadModal" class="text-gray-500 hover:text-gray-700 text-3xl">&times;</button>
+            </div>
+            <p class="text-gray-600 mb-6 text-center">용의자 식별 시스템</p>
+
+            <div class="space-y-6">
+                <div
+                    class="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
+                    <label for="videoFile" class="block text-lg font-medium text-blue-700 mb-2 cursor-pointer">
+                        CCTV 영상 파일 선택
+                    </label>
+                    <input type="file" id="videoFile" accept="video/*" class="hidden">
+                    <p class="text-sm text-gray-500">MP4, AVI, MOV 등 지원</p>
+                </div>
+
+                <div id="fileInfo" class="hidden bg-green-50 border border-green-200 rounded-lg p-3">
+                    <p class="text-green-700 text-sm font-medium">선택된 파일: <span id="fileName"></span></p>
+                </div>
+
+                <button id="analyzeBtn"
+                    class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled>
+                    분석 시작
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 인물 선택 모달 -->
+    <div id="suspectSelectModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b sticky top-0 bg-white z-10">
+                <div class="flex justify-between items-center mb-2">
+                    <h1 class="text-3xl font-bold text-gray-800">용의자 데이터베이스</h1>
+                    <button id="closeSuspectModal" class="text-gray-500 hover:text-gray-700 text-3xl">&times;</button>
+                </div>
+                <p class="text-gray-600">감지할 대상을 선택해주세요</p>
+            </div>
+
+            <div class="p-6">
+                <div class="text-center mb-6">
+                    <button id="addSuspectBtn"
+                        class="bg-green-600 text-white py-2 px-6 rounded-lg font-semibold hover:bg-green-700 transition-all duration-200 shadow-md">
+                        + 용의자 추가
+                    </button>
+                </div>
+
+                <div id="suspectCardsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <!-- 인물 카드가 동적으로 생성됩니다 -->
+                    <div class="col-span-full text-center py-8 text-gray-500">
+                        <p>인물 목록을 불러오는 중...</p>
+                    </div>
+                </div>
+
+                <div id="selectedSuspectInfo" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                    <h4 class="font-bold text-blue-800 mb-2">선택된 대상:</h4>
+                    <div id="selectedSuspectName" class="text-gray-700"></div>
+                    <p class="text-sm text-gray-500 mt-2">여러 명을 선택하려면 카드를 클릭하세요</p>
+                </div>
+
+                <div class="text-center">
+                    <button id="proceedToDashboard"
+                        class="bg-blue-600 text-white py-3 px-8 rounded-lg text-lg font-semibold hover:bg-blue-700 disabled:opacity-50"
+                        disabled>
+                        모니터링 시작
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 용의자 추가 모달 -->
+    <div id="addSuspectModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-2xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">용의자 등록</h2>
+                    <button id="closeAddSuspectModal"
+                        class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+                </div>
+
+                <form id="addSuspectForm" class="space-y-4">
+                    <div>
+                        <label for="enrollPersonId" class="block text-sm font-medium text-gray-700 mb-1">
+                            인물 ID <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="enrollPersonId" required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="예: hong, criminal">
+                        <p class="text-xs text-gray-500 mt-1">영문, 숫자, 언더스코어만 사용 가능</p>
+                    </div>
+
+                    <div>
+                        <label for="enrollName" class="block text-sm font-medium text-gray-700 mb-1">
+                            이름 <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="enrollName" required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="예: 홍길동">
+                    </div>
+
+                    <div>
+                        <label for="enrollImage" class="block text-sm font-medium text-gray-700 mb-1">
+                            정면 사진 <span class="text-red-500">*</span>
+                        </label>
+                        <div
+                            class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
+                            <input type="file" id="enrollImage" accept="image/*" required class="hidden">
+                            <label for="enrollImage" class="cursor-pointer">
+                                <div id="imagePreview" class="hidden mb-2">
+                                    <img id="previewImg" src="" alt="미리보기"
+                                        class="max-w-full max-h-48 mx-auto rounded-lg">
+                                </div>
+                                <div id="imagePlaceholder" class="text-gray-500">
+                                    <svg class="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor"
+                                        viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z">
+                                        </path>
+                                    </svg>
+                                    <p>클릭하여 사진 선택</p>
+                                    <p class="text-xs mt-1">JPEG, PNG 등 지원</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center">
+                        <input type="checkbox" id="enrollIsCriminal"
+                            class="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500">
+                        <label for="enrollIsCriminal" class="ml-2 text-sm font-medium text-gray-700">
+                            범죄자로 등록
+                        </label>
+                    </div>
+
+                    <div id="enrollError"
+                        class="hidden bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm"></div>
+                    <div id="enrollSuccess"
+                        class="hidden bg-green-50 border border-green-200 rounded-lg p-3 text-green-700 text-sm"></div>
+
+                    <div class="flex gap-3 pt-4">
+                        <button type="button" id="cancelEnrollBtn"
+                            class="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+                            취소
+                        </button>
+                        <button type="submit" id="submitEnrollBtn"
+                            class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            등록
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- 클립 갤러리 모달 -->
-    <div id="clipModal"
-        class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
+    <div id="clipModal" class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div class="p-4 border-b flex justify-between items-center">
                 <h2 class="text-2xl font-bold text-gray-800">범죄자 감지 클립</h2>

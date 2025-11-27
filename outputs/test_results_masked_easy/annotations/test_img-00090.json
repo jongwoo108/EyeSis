@@ -1,0 +1,27 @@
+{
+  "image_path": "images\\test_easy\\test_img-00090.jpg",
+  "image_name": "test_img-00090.jpg",
+  "banks_used": [
+    "base",
+    "masked",
+    "dynamic"
+  ],
+  "faces": [
+    {
+      "bbox": [
+        1223,
+        692,
+        1469,
+        1024
+      ],
+      "status": "normal",
+      "name": "jw",
+      "person_id": "jw",
+      "confidence": 86,
+      "color": "green",
+      "angle_type": "left",
+      "yaw_angle": -19.593507735972825,
+      "bank_type": "masked"
+    }
+  ]
+}

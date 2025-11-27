@@ -1,0 +1,27 @@
+{
+  "image_path": "images\\test_easy\\test_img-00017.jpg",
+  "image_name": "test_img-00017.jpg",
+  "banks_used": [
+    "base",
+    "masked",
+    "dynamic"
+  ],
+  "faces": [
+    {
+      "bbox": [
+        2066,
+        762,
+        2404,
+        1165
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 60,
+      "color": "red",
+      "angle_type": "left",
+      "yaw_angle": -34.21762089504812,
+      "bank_type": "dynamic"
+    }
+  ]
+}
