@@ -1,170 +1,260 @@
-# 🎯 FaceWatch - 실시간 얼굴 식별·추적 시스템
+# FaceWatch — 실시간 얼굴 식별·추적 시스템
 
-<div align="center">
+> InsightFace 기반 고성능 얼굴 인식 및 추적 시스템
 
-**InsightFace 기반 고성능 얼굴 인식 및 실시간 추적 AI 시스템**
-
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
-[![InsightFace](https://img.shields.io/badge/InsightFace-buffalo__l-orange.svg)](https://github.com/deepinsight/insightface)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-blue.svg)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-[프로젝트 개요](#-프로젝트-개요) • [주요 기능](#-주요-기능) • [기술 스택](#-기술-스택) • [빠른 시작](#-빠른-시작) • [아키텍처](#-아키텍처)
-
-</div>
+FaceWatch는 CCTV/영상/이미지 콘텐츠에서 특정 인물을 자동으로 식별하고 추적하는 Python 기반 AI 시스템입니다. InsightFace의 고성능 얼굴 인식 모델(buffalo_l)을 기반으로 임베딩 비교, 트래킹, 신뢰도 누적, 스냅샷 저장, 시각화 도구까지 포함하고 있습니다.
 
 ---
 
-## 📋 프로젝트 개요
+## 프로젝트 목표
 
-**FaceWatch**는 CCTV 영상, 이미지, 실시간 스트림에서 특정 인물을 자동으로 식별하고 추적하는 엔터프라이즈급 얼굴 인식 시스템입니다. InsightFace의 고성능 모델을 기반으로 하며, WebSocket 기반 실시간 통신, Bank 임베딩 시스템, 옆모습 감지 등 고급 기능을 제공합니다.
-
-### 🎯 핵심 가치
-
-- **실시간 처리**: WebSocket 기반 양방향 통신으로 50-150ms 지연 시간 달성
-- **높은 정확도**: Bank 임베딩 시스템과 적응형 임계값으로 오탐 최소화
-- **다양한 각도 지원**: 정면부터 프로필까지 모든 각도의 얼굴 인식 가능
-- **자동 학습**: 감지된 얼굴 임베딩을 자동으로 Bank에 추가하여 성능 지속 향상
-- **엔터프라이즈급**: PostgreSQL 기반 데이터 영구 저장 및 감지 로그 관리
+- 정확한 얼굴 인식 및 인물 식별
+- 영상(프레임 단위)에서 지속적으로 동일 인물 추적
+- 신뢰도 기반 스냅샷 저장(중복 방지)
+- 임베딩 분석(히스토그램, heatmap, PCA 등)
+- 범죄자 또는 특정 대상자 등록 및 갤러리 관리
 
 ---
 
-## ✨ 주요 기능
+## 프로젝트 구조
 
-### 🔍 1. 실시간 얼굴 감지 및 인식
-
-- **WebSocket 기반 실시간 통신**: 프레임 끊김 없는 부드러운 실시간 감지
-- **다중 용의자 동시 추적**: 여러 명의 대상자를 동시에 모니터링
-- **자동 재연결**: 연결 끊김 시 지수 백오프 방식으로 자동 재연결
-- **HTTP 폴백**: WebSocket 실패 시 자동으로 HTTP API로 전환
-
-### 🎨 2. 고급 박스 렌더링
-
-- **시각적 구분**: 범죄자(빨강), 일반인(초록), 미확인(노랑) 색상 구분
-- **모서리 강조**: 박스 네 모서리 강조로 가시성 향상
-- **동적 텍스트 배치**: 화면 경계를 고려한 스마트 텍스트 위치 조정
-- **각도 정보 표시**: 감지된 얼굴의 각도 정보 실시간 표시
-
-### 🧠 3. Bank 임베딩 시스템
-
-- **다중 각도 임베딩 저장**: 한 인물에 대한 다양한 각도의 얼굴 임베딩 보관
-- **자동 학습**: 매칭 성공 시 해당 얼굴의 임베딩을 자동으로 Bank에 추가
-- **중복 방지**: 유사도 0.95 이상인 임베딩은 중복으로 간주하여 스킵
-- **성능 향상**: 시간이 지날수록 인식 정확도 자동 향상
-
-### 📐 4. 얼굴 각도 감지
-
-- **5가지 각도 분류**: 정면, 왼쪽, 오른쪽, 왼쪽 프로필, 오른쪽 프로필
-- **Yaw 각도 계산**: InsightFace 랜드마크 기반 정확한 각도 측정
-- **각도별 통계**: 각도별 인식 성공률 통계 제공
-- **UI 표시**: 감지된 각도 정보를 박스 레이블에 표시
-
-### 🎭 5. 마스크 감지 및 적응형 임계값
-
-- **자동 마스크 감지**: 유사도 기반으로 마스크 착용 가능성 자동 추정
-- **동적 임계값 조정**: 마스크 착용 시 임계값 자동 낮춤 (0.30 → 0.22~0.28)
-- **기존 이미지 활용**: 마스크 없는 등록 이미지로도 마스크 쓴 얼굴 인식 가능
-- **오탐 방지**: 최소 임계값 보장으로 오탐 방지
-
-### 🖼️ 6. 화질 기반 적응형 임계값
-
-- **자동 화질 추정**: 얼굴 크기와 이미지 크기 비율로 화질 자동 판단
-- **동적 임계값 조정**: 
-  - 고화질: 높은 임계값 (오탐 방지 강화)
-  - 저화질: 낮은 임계값 (인식률 유지)
-- **3단계 화질 분류**: High (≥150px, ≥5%), Medium (≥100px, ≥2%), Low (그 외)
-
-### 🛡️ 7. 고급 오탐 방지
-
-- **bbox 기반 다중 매칭 필터링**: 같은 얼굴 영역에서 여러 인물 매칭 시 자동 처리
-- **프레임 간 연속성 체크**: 최근 5프레임 내 같은 인물 매칭 여부 확인
-- **sim_gap 체크**: 최고 유사도와 두 번째 유사도 차이 확인 (최소 5% 차이 필요)
-- **검토 대상 자동 분리**: 의심스러운 매칭을 별도 폴더에 자동 분리
-
-### 💾 8. 데이터베이스 통합
-
-- **PostgreSQL 지원**: 인물 정보 및 감지 로그 영구 저장
-- **다중 데이터 소스**: PostgreSQL → Bank 임베딩 → JSON 순서로 자동 fallback
-- **감지 로그 저장**: 모든 감지 이벤트를 데이터베이스에 자동 저장
-- **API 제공**: 감지 로그 조회 및 통계 API 제공
-
----
-
-## 🛠️ 기술 스택
-
-### Backend
-| 분야 | 기술 |
-|------|------|
-| **Face Recognition** | InsightFace (buffalo_l), ONNX Runtime |
-| **Detection** | RetinaFace (InsightFace 내장) |
-| **Backend Framework** | FastAPI, Uvicorn |
-| **WebSocket** | FastAPI WebSocket |
-| **Database** | PostgreSQL, SQLAlchemy ORM |
-| **Image Processing** | OpenCV, NumPy |
-
-### Frontend
-| 분야 | 기술 |
-|------|------|
-| **UI Framework** | HTML5, JavaScript (ES6+) |
-| **Styling** | Tailwind CSS |
-| **Canvas API** | HTML5 Canvas (박스 렌더링) |
-| **Real-time** | WebSocket API |
-
-### DevOps & Tools
-| 분야 | 기술 |
-|------|------|
-| **Language** | Python 3.9+ |
-| **Package Manager** | pip |
-| **Version Control** | Git |
-| **Analysis** | NumPy, Matplotlib, Seaborn, Scikit-learn |
-
----
-
-## 🚀 빠른 시작
-
-### 1. 환경 설정
-
-```bash
-# 저장소 클론
-git clone <repository-url>
-cd FaceWatch
-
-# 가상환경 생성 및 활성화
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 의존성 설치
-pip install -r requirements.txt
+```
+FaceWatch/
+├─ images/                    # 이미지 관련 폴더
+│  ├─ enroll/                 # 인물 등록 이미지 (인물별 폴더)
+│  │   ├─ hani/
+│  │   │   └─ hani.jpg        # 등록용 이미지
+│  │   ├─ danielle/
+│  │   └─ ...
+│  ├─ source/                 # 추출할 소스 이미지 (분석 대상)
+│  │   └─ test.jpg            # 분석할 이미지 파일
+│  └─ extracted_frames/       # 추출된 프레임 (수동 추가용)
+│     └─ hani/
+│        └─ hani_f00001.jpg
+│
+├─ videos/                    # 영상 관련 폴더
+│  └─ source/                 # 추출할 소스 영상 (분석 대상)
+│     └─ yh.MOV               # 분석할 영상 파일
+│
+├─ notebooks/                 # 주피터 노트북 파일 (테스트/실험용)
+│  └─ *.ipynb                 # 각 노트북은 자동으로 프로젝트 루트를 작업 디렉토리로 설정
+│
+├─ outputs/                   # 출력 폴더
+│  ├─ embeddings/             # 인물별 임베딩 (사람별 폴더 구조)
+│  │   ├─ hani/
+│  │   │   ├─ bank.npy        # Bank 임베딩 (N×512)
+│  │   │   └─ centroid.npy   # Centroid 임베딩 (512)
+│  │   ├─ danielle/
+│  │   │   ├─ bank.npy
+│  │   │   └─ centroid.npy
+│  │   └─ ...
+│  └─ results/                 # 분석 결과 (입력 파일명 기반)
+│     └─ <파일명>/            # 입력 파일명 기반 폴더 (자동 생성)
+│        ├─ matches/          # 매칭된 스냅샷
+│        ├─ logs/              # CSV 로그
+│        └─ frames/           # 추출된 프레임 (선택적)
+│
+├─ backend/
+│  ├─ main.py                      # FastAPI 백엔드 서버
+│  │                                # - /api/detect: 얼굴 감지 및 인식
+│  │                                # - /api/persons: 등록된 인물 목록
+│  │                                # - outputs/embeddings 또는 database/*.json 사용
+│  └─ database/                    # 레거시 JSON 데이터베이스 (선택적)
+│      └─ *.json                   # 인물별 임베딩 JSON 파일
+│
+├─ src/
+│  ├─ face_enroll.py               # 얼굴 임베딩 추출 스크립트
+│  │                                # - 기본 등록: enroll 폴더에서 정면 사진 등록
+│  │                                # - 수동 추가: 이미지 폴더에서 bank에 추가
+│  ├─ face_match_cctv.py           # 통합 인식 스크립트 (권장)
+│  │                                # - 이미지/영상 모두 처리
+│  │                                # - 얼굴 각도 감지
+│  │                                # - 마스크 감지 및 적응형 임계값
+│  │                                # - 오탐 방지 (sim_gap 체크)
+│  │                                # - 식별된 얼굴의 임베딩 자동 수집
+│  │                                # - CSV 로그 및 스냅샷 저장
+│  ├─ embedding_analysis.py        # 임베딩 분석 도구
+│  └─ utils/                       # 유틸리티 모듈
+│     ├─ device_config.py          # GPU/CPU 설정
+│     ├─ gallery_loader.py        # 갤러리 로더
+│     ├─ mask_detector.py          # 마스크 감지 및 적응형 임계값
+│     └─ face_angle_detector.py   # 얼굴 각도 감지
+│
+├─ web/
+│  ├─ index.html                   # 웹 UI 메인 페이지
+│  ├─ script.js                    # 프론트엔드 JavaScript
+│  └─ style.css                    # 커스텀 스타일
+│
+└─ README.md
 ```
 
-### 2. 인물 등록
+### 폴더 사용 가이드
+
+**입력 파일 배치:**
+- 등록용 이미지: `images/enroll/<인물명>/<파일명>.jpg`
+- 분석용 이미지: `images/source/<파일명>.jpg`
+- 분석용 영상: `videos/source/<파일명>.mp4`
+
+**출력 파일 위치:**
+- 임베딩: `outputs/embeddings/<인물명>/bank.npy`, `centroid.npy` (사람별 폴더 구조)
+- 분석 결과: `outputs/results/<입력파일명>/`
+
+---
+
+## 주요 기능
+
+### 1. 사람 등록 (Face Enrollment)
+
+**통합 등록 스크립트 사용 (권장):**
 
 ```bash
-# 1. 등록용 이미지를 images/enroll/<인물명>/ 폴더에 배치
-# 예: images/enroll/hani/hani.jpg
-
-# 2. 등록 실행
 python src/face_enroll.py
-# MODE = 1 선택하여 기본 등록 실행
 ```
 
-### 3. 데이터베이스 설정 (선택사항, 권장)
+스크립트 내에서 모드를 선택할 수 있습니다:
+
+#### 1-1. 기본 등록 (MODE = 1)
+- `images/enroll/` 폴더의 모든 인물을 등록
+- 각 인물별 폴더에서 정면 사진을 읽어 bank와 centroid 생성
+- **출력:**
+  - `outputs/embeddings/<person>/bank.npy` (N×512 배열)
+  - `outputs/embeddings/<person>/centroid.npy` (512 벡터)
+
+#### 1-2. 수동 추가 (MODE = 2)
+- `images/extracted_frames/<person>/` 폴더의 이미지들을 bank에 추가
+- 중복 체크 후 새로운 얼굴만 추가
+
+> **참고**: 영상에서 임베딩 자동 수집은 `face_match_cctv.py`에서 처리됩니다. 영상 분석 시 식별된 얼굴의 임베딩이 자동으로 bank에 추가됩니다.
+
+**폴더 구조:**
+```
+images/
+├─ enroll/              # 등록용 이미지 (인물별 폴더)
+│  ├─ hani/
+│  │   └─ hani.jpg
+│  └─ danielle/
+│      └─ danielle.jpg
+└─ extracted_frames/    # 추출된 프레임 (수동 추가용)
+   └─ hani/
+      └─ hani_f00001.jpg
+```
+
+---
+
+### 2. 얼굴 인식 및 매칭 (Face Recognition & Matching)
+
+**통합 인식 스크립트 사용 (권장):**
 
 ```bash
-# PostgreSQL 설치 및 데이터베이스 생성
-psql -U postgres
-CREATE DATABASE facewatch;
-\q
-
-# 환경 변수 설정 (backend/.env)
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/facewatch
-
-# 데이터 마이그레이션
-python backend/init_db.py
+python src/face_match_cctv.py
 ```
 
-### 4. 백엔드 서버 실행
+스크립트 내에서 입력 파일명만 지정하면 자동으로 처리합니다:
+
+```python
+# src/face_match_cctv.py 내부 설정
+input_filename = "yh.MOV"  # 파일명만 지정
+```
+
+**자동 경로 탐색:**
+- 이미지: `images/source/` → `images/` (호환성)
+- 영상: `videos/source/` → `videos/` → `images/` (호환성)
+
+#### 2-1. 주요 기능
+
+**얼굴 각도 감지**
+- 정면(front), 왼쪽(left), 오른쪽(right), 프로필(profile) 자동 감지
+- 각도별 인식 성공률 통계 제공
+
+**마스크 감지 및 적응형 임계값** ⭐ (추가 기능)
+- 유사도 기반 마스크 착용 가능성 자동 추정
+- 마스크 가능성이 높으면 임계값 자동 조정 (0.30 → 0.22~0.28)
+- 기존 등록 이미지(마스크 없음)만으로도 마스크 쓴 얼굴 인식 가능
+- 최소 임계값(0.22) 보장으로 오탐 방지
+
+**화질 기반 적응형 임계값 조정** ⭐ (추가 기능)
+- 얼굴 크기와 이미지 크기 비율로 화질 자동 추정 (high/medium/low)
+- 고화질: 더 높은 임계값 적용 (오탐 방지 강화)
+- 저화질: 낮은 임계값 적용 (인식률 유지)
+- 화질에 따라 동적으로 임계값 조정 (0.28 ~ 0.40)
+
+**고급 오탐 방지** ⭐ (추가 기능)
+- **bbox 기반 다중 매칭 필터링**: 같은 얼굴 영역에서 여러 인물로 매칭된 경우 자동 필터링
+  - IoU 및 중심점 거리 기반으로 같은 얼굴 영역 판단
+  - sim_gap이 충분히 크면 가장 높은 유사도만 인정
+  - 애매한 경우 검토 대상으로 분리
+- **프레임 간 연속성 체크**: 이전/다음 프레임에서 같은 인물이 매칭되었는지 확인
+  - 연속성이 없고 유사도가 낮은 경우 검토 대상으로 분리
+  - 일시적 오탐 자동 제거
+- **sim_gap 체크**: 최고 유사도와 두 번째 유사도의 차이 확인 (최소 5% 차이 필요)
+- **중복 얼굴 필터링**: 같은 프레임 내 동일 인물 중복 감지 방지
+
+**검토 대상 자동 분리** ⭐ (추가 기능)
+- 의심스러운 매칭을 자동으로 `matches/review/` 폴더에 분리
+- 검토 사유 자동 분류:
+  - `same_face_multiple_persons`: 같은 얼굴에 여러 인물 매칭
+  - `ambiguous_match`: sim_gap이 작아 애매한 경우
+  - `low_confidence`: 낮은 유사도 또는 작은 sim_gap
+  - `no_continuity`: 프레임 간 연속성 없음
+- CSV 로그에 검토 사유 기록
+
+**임베딩 자동 수집** ⭐ (추가 기능)
+- 영상 분석 시 식별된 얼굴의 임베딩을 자동으로 bank에 추가
+- 매칭 성공 시 해당 얼굴의 임베딩을 bank에 저장하여 인식 성능 향상
+- 중복 체크 후 새로운 얼굴만 추가 (유사도 0.95 이상이면 중복으로 간주)
+- 각도 정보와 함께 저장되어 다양한 각도의 얼굴 인식 개선
+
+**상세한 로깅**
+- CSV 로그: 모든 얼굴 감지 기록 저장 (화질 정보, 검토 사유 포함)
+- 스냅샷: 매칭된 얼굴만 이미지로 저장
+- 검토 대상: 의심스러운 매칭 별도 저장
+- 통계: 인물별/각도별 매칭 통계 출력
+
+#### 2-2. 출력 구조
+
+```
+outputs/
+├─ embeddings/            # 인물별 임베딩 (등록 시 생성)
+└─ results/               # 분석 결과 (분석 시 자동 생성)
+   └─ <파일명>_<타임스탬프>/  # 입력 파일명 + 실행 시간 기반 폴더 ⭐
+      ├─ matches/         # 매칭된 스냅샷 (매칭된 얼굴만)
+      │   └─ review/      # 검토 대상 스냅샷 (의심스러운 매칭) ⭐
+      ├─ logs/            # CSV 로그 (모든 얼굴 감지 기록)
+      └─ frames/          # 추출된 프레임 (영상일 때, 선택적)
+```
+
+> **참고:** 
+> - 이전 버전의 `outputs/test_results/` 폴더는 더 이상 사용되지 않습니다.
+> - 현재는 입력 파일명 + 타임스탬프 기반으로 폴더가 자동 생성됩니다 (예: `ive_iam_20240101_120000/`)
+> - 각 실행마다 새로운 폴더가 생성되어 결과가 덮어써지지 않습니다. ⭐
+
+#### 2-3. 사용 예시
+
+**이미지 분석:**
+```bash
+# images/source/test.jpg 파일 분석
+# 스크립트 내부에서 input_filename = "test.jpg" 설정
+python src/face_match_cctv.py
+```
+
+**영상 분석:**
+```bash
+# videos/source/yh.MOV 파일 분석
+# 스크립트 내부에서 input_filename = "yh.MOV" 설정
+python src/face_match_cctv.py
+```
+
+**프레임 저장 옵션:**
+- 영상 분석 시 프레임 이미지 저장 가능 (기본: 비활성화)
+- `SAVE_FRAMES = True`로 설정하면 N프레임마다 저장
+
+---
+
+### 3. 웹 UI + FastAPI 백엔드 연동
+
+**웹 기반 실시간 얼굴 인식 서비스**
+
+#### 3-1. 백엔드 서버 실행
 
 ```bash
 # 프로젝트 루트에서 실행
@@ -174,13 +264,29 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 5000
 서버가 시작되면:
 - API 엔드포인트: http://localhost:5000/api/detect
 - API 문서: http://localhost:5000/docs (FastAPI 자동 생성)
-- WebSocket: ws://localhost:5000/ws/detect
+- 등록된 인물 목록: http://localhost:5000/api/persons
 
-### 5. 프론트엔드 실행
+#### 3-2. ngrok을 통한 외부 접근 (선택사항)
+
+**ngrok 설정:**
+1. `ngrok.yml` 파일이 프로젝트 루트에 있습니다
+2. ngrok 실행:
+   ```bash
+   ngrok start facewatch-server
+   ```
+3. ngrok URL이 자동으로 프론트엔드에 적용됩니다 (자동 감지)
+
+**장점:**
+- 외부에서 접근 가능 (모바일, 원격 테스트)
+- HTTPS 자동 지원
+- WebSocket 연결 자동 처리
+
+#### 3-3. 프론트엔드 실행
 
 **방법 1: VSCode Live Server (권장)**
 1. VSCode에서 `web/index.html` 파일 열기
 2. 우클릭 → "Open with Live Server"
+3. 브라우저에서 자동으로 열림
 
 **방법 2: Python HTTP 서버**
 ```bash
@@ -193,314 +299,344 @@ python -m http.server 5500
 npx http-server web -p 5500
 ```
 
-### 6. 웹 UI 사용
+#### 3-4. 사용 방법
 
-1. 브라우저에서 접근: http://localhost:5500/index.html
-2. CCTV 영상 파일 업로드 (MP4, AVI, MOV 등)
-3. 감지할 용의자 선택 (카드 클릭, 다중 선택 가능)
-4. "모니터링 시작" 버튼 클릭
-5. 우측 제어판에서 "AI 감지 활성화" 토글 ON
-6. 실시간 감지 결과 확인
+1. **브라우저에서 접근**: 
+   - 로컬: http://localhost:5500/index.html
+   - ngrok 사용 시: ngrok에서 제공하는 URL 접근
+2. **영상 파일 업로드**: 상단 "영상 업로드" 버튼 또는 중앙 영역 클릭하여 파일 선택 (MP4, AVI, MOV 등)
+3. **인물 선택**: "인물 선택" 버튼 클릭 → 감지할 대상 선택 (여러 명 선택 가능)
+4. **모니터링 시작**: "모니터링 시작" 버튼 클릭
+5. **AI 감지 활성화**: 우측 제어판에서 토글 스위치 ON
+6. **결과 확인**: 
+   - 실시간 영상에 얼굴 박스 표시
+   - 범죄자/실종자 감지 시 색상 구분 표시
+   - **인물 감지 타임라인**: 하단에 인물별 감지 구간 시각화
+   - **감지 로그**: 우측 패널에 누적 히스토리 표시 (썸네일, 정확도, 타임스탬프)
+   - **스냅샷 보기**: 감지된 얼굴 이미지 갤러리 (인물별 필터링, 선택 다운로드)
+   - **클립 보기**: 감지 구간별 영상 클립 추출 및 다운로드
+   - **CSV 내보내기**: 감지 로그를 CSV 파일로 다운로드
 
----
+#### 3-5. 데이터베이스 설정 (PostgreSQL)
 
-## 🏗️ 아키텍처
+**PostgreSQL 설치 및 설정:**
 
-### 시스템 아키텍처
+자세한 내용은 `backend/SETUP.md`를 참조하세요.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      클라이언트 (웹 브라우저)                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │  HTML5 Video │  │ Canvas API   │  │  WebSocket   │     │
-│  │   (재생)      │  │ (박스 렌더링) │  │  (실시간 통신) │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└───────────────────────┬─────────────────────────────────────┘
-                        │ WebSocket / HTTP
-                        │ (Base64 이미지)
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI 백엔드 서버                       │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  WebSocket 엔드포인트 (/ws/detect)                │   │
-│  │  HTTP API 엔드포인트 (/api/detect)                │   │
-│  └────────────────────────────────────────────────────┘   │
-│                        │                                    │
-│                        ▼                                    │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  InsightFace 모델 (buffalo_l)                      │   │
-│  │  - 얼굴 감지 (RetinaFace)                          │   │
-│  │  - 임베딩 추출 (512차원)                            │   │
-│  │  - 얼굴 각도 추정                                   │   │
-│  └────────────────────────────────────────────────────┘   │
-│                        │                                    │
-│                        ▼                                    │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  매칭 엔진                                          │   │
-│  │  - Bank 임베딩 매칭                                 │   │
-│  │  - 적응형 임계값 적용                               │   │
-│  │  - 오탐 방지 로직                                   │   │
-│  └────────────────────────────────────────────────────┘   │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        │               │               │
-        ▼               ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  PostgreSQL  │ │ Bank 임베딩  │ │ JSON (레거시)│
-│  (우선순위 1) │ │ (우선순위 2) │ │ (우선순위 3) │
-└──────────────┘ └──────────────┘ └──────────────┘
-```
+1. **PostgreSQL 설치 및 데이터베이스 생성**
+   ```bash
+   psql -U postgres
+   CREATE DATABASE facewatch;
+   \q
+   ```
 
-### 데이터 흐름
+2. **환경 변수 설정**
+   - `backend/.env` 파일 생성:
+     ```env
+     DATABASE_URL=postgresql://postgres:postgres@localhost:5432/facewatch
+     ```
 
-```
-1. 클라이언트: 비디오 프레임 캡처 (Base64 인코딩)
-   ↓
-2. WebSocket: 실시간 프레임 전송
-   ↓
-3. 서버: Base64 디코딩 → OpenCV 이미지
-   ↓
-4. InsightFace: 얼굴 감지 및 임베딩 추출
-   ↓
-5. 매칭 엔진: Bank 임베딩과 Cosine 유사도 비교
-   ↓
-6. 결과 처리: 좌표, 메타데이터, 각도 정보 추출
-   ↓
-7. WebSocket: JSON 응답 (bbox, name, confidence 등)
-   ↓
-8. 클라이언트: Canvas API로 박스 렌더링
-```
+3. **데이터 마이그레이션**
+   ```bash
+   python backend/init_db.py
+   ```
+   - `outputs/embeddings` 또는 `backend/database/*.json`에서 데이터를 PostgreSQL로 마이그레이션
 
-### 프로젝트 구조
-
-```
-FaceWatch/
-├── backend/                 # FastAPI 백엔드
-│   ├── main.py              # 메인 서버 (WebSocket + HTTP API)
-│   ├── database.py          # PostgreSQL ORM 모델
-│   ├── init_db.py           # 데이터베이스 초기화 및 마이그레이션
-│   └── database/            # 레거시 JSON 데이터베이스
-│
-├── web/                     # 프론트엔드
-│   ├── index.html           # 메인 페이지
-│   ├── script.js            # 클라이언트 로직 (WebSocket, 렌더링)
-│   └── style.css            # 커스텀 스타일
-│
-├── src/                     # 코어 로직
-│   ├── face_enroll.py       # 인물 등록 스크립트
-│   ├── face_match_cctv.py  # 통합 인식 스크립트
-│   └── utils/               # 유틸리티 모듈
-│       ├── gallery_loader.py      # Bank 임베딩 로더
-│       ├── face_angle_detector.py # 얼굴 각도 감지
-│       ├── mask_detector.py      # 마스크 감지
-│       └── device_config.py       # GPU/CPU 설정
-│
-├── outputs/                 # 출력 폴더
-│   ├── embeddings/          # Bank 임베딩 (인물별 폴더)
-│   │   └── <person>/
-│   │       ├── bank.npy     # 다중 각도 임베딩
-│   │       ├── centroid.npy # 평균 임베딩
-│   │       └── angles.json  # 각도 메타데이터
-│   └── results/             # 분석 결과
-│
-├── images/                  # 이미지 입력
-│   ├── enroll/              # 등록용 이미지
-│   └── source/              # 분석용 이미지
-│
-└── videos/                  # 영상 입력
-    └── source/              # 분석용 영상
-```
-
----
-
-## 📊 주요 성과 및 개선 사항
-
-### 성능 개선 이력
-
-| 단계 | 네트워크 사용량 | 지연 시간 | 프레임 끊김 | 박스 안정성 |
-|------|----------------|----------|------------|------------|
-| **서버사이드 렌더링** | 매우 높음 (~500KB/프레임) | 200-500ms | 심함 | - |
-| **클라이언트사이드 렌더링** | 낮음 (~2KB/프레임) | 100-300ms | 보통 | 불안정 |
-| **WebSocket 기반** | 매우 낮음 (~2KB/프레임) | **50-150ms** | **없음** | **안정적** |
-
-### 주요 개선 사항
-
-#### 1. 실시간 통신 최적화
-- ✅ 서버사이드 렌더링 → 클라이언트사이드 렌더링 전환
-- ✅ HTTP 요청 → WebSocket 양방향 통신 도입
-- ✅ 프레임 끊김 현상 완전 해결
-- ✅ 박스 튀는 현상 해결 (프레임 ID 추적, 순서 보장)
-
-#### 2. 인식 정확도 향상
-- ✅ Bank 임베딩 시스템 도입 (다중 각도 임베딩 저장)
-- ✅ 자동 학습 기능 (감지된 얼굴 임베딩 자동 추가)
-- ✅ 옆모습 감지 기능 추가
-- ✅ 마스크 감지 및 적응형 임계값
-
-#### 3. 오탐 방지 강화
-- ✅ bbox 기반 다중 매칭 필터링
-- ✅ 프레임 간 연속성 체크
-- ✅ 화질 기반 적응형 임계값
-- ✅ 검토 대상 자동 분리
-
-#### 4. 사용자 경험 개선
-- ✅ 박스 렌더링 최적화 (모서리 강조, 동적 텍스트 배치)
-- ✅ 다중 용의자 동시 추적
-- ✅ 자동 재연결 기능
-- ✅ HTTP 폴백 메커니즘
-
-자세한 개선 이력은 [SERVICE_IMPROVEMENTS.md](SERVICE_IMPROVEMENTS.md)를 참조하세요.
-
----
-
-## 📖 사용 예시
-
-### 이미지 분석
-
-```bash
-# 1. 분석할 이미지를 images/source/ 폴더에 배치
-# 2. 스크립트에서 파일명 설정
-#    input_filename = "test.jpg"
-# 3. 분석 실행
-python src/face_match_cctv.py
-```
-
-### 영상 분석
-
-```bash
-# 1. 분석할 영상을 videos/source/ 폴더에 배치
-# 2. 스크립트에서 파일명 설정
-#    input_filename = "yh.MOV"
-# 3. 분석 실행
-python src/face_match_cctv.py
-```
-
-### 결과 확인
-
-```
-outputs/
-├── embeddings/            # 임베딩 파일
-│   └── hani/
-│       ├── bank.npy       # 다중 각도 임베딩
-│       ├── centroid.npy   # 평균 임베딩
-│       └── angles.json   # 각도 메타데이터
-└── results/               # 분석 결과
-    └── yh_20240101_120000/
-        ├── matches/       # 매칭된 스냅샷
-        │   └── review/    # 검토 대상
-        ├── logs/          # CSV 로그
-        └── frames/         # 추출된 프레임
-```
-
----
-
-## 🔧 설정 및 커스터마이징
-
-### 임계값 설정
-
-기본 임계값: `BASE_THRESH = 0.32`
-
-- **화질 기반 자동 조정**:
-  - 고화질: `0.40` (오탐 방지 강화)
-  - 중화질: `0.32` (기본값)
-  - 저화질: `0.33` (인식률 유지)
-- **마스크 착용 시**: `-0.02 ~ -0.05` 추가 조정
-- **최소 임계값**: `0.28` (고화질), `0.30` (중화질), `0.28` (저화질)
-
-### 데이터 소스 우선순위
+**데이터 소스 우선순위:**
 
 백엔드는 다음 순서로 얼굴 데이터를 로드합니다:
 
-1. **PostgreSQL 데이터베이스** (권장)
-2. `outputs/embeddings/<person>/bank.npy` 또는 `centroid.npy` (fallback)
-3. `backend/database/*.json` (레거시 지원)
+1. **우선순위 1**: PostgreSQL 데이터베이스 (권장)
+   - `backend/init_db.py`로 마이그레이션된 데이터 사용
+   - 감지 로그도 자동으로 저장됨
 
----
+2. **우선순위 2**: `outputs/embeddings/<person>/bank.npy` 또는 `centroid.npy` (fallback)
+   - PostgreSQL 연결 실패 시 자동 사용
+   - `gallery_loader.py`를 통해 로드
 
-## 📚 API 문서
+3. **우선순위 3**: `backend/database/*.json` (레거시 지원)
+   - JSON 파일 형식:
+     ```json
+     {
+       "person_id": "hani",
+       "name": "하니",
+       "is_criminal": false,
+       "info": {},
+       "mean_embedding": [0.123, 0.456, ...]  // 512차원 벡터
+     }
+     ```
 
-### WebSocket 엔드포인트
-
-**연결**: `ws://localhost:5000/ws/detect`
-
-**클라이언트 → 서버**:
-```json
-{
-  "type": "frame",
-  "data": {
-    "image": "data:image/jpeg;base64,...",
-    "suspect_ids": ["hani", "danielle"],
-    "frame_id": 123
-  }
-}
-```
-
-**서버 → 클라이언트**:
-```json
-{
-  "type": "detection",
-  "data": {
-    "frame_id": 123,
-    "detections": [
-      {
-        "bbox": [100, 200, 300, 400],
-        "name": "하니",
-        "confidence": 85.5,
-        "color": "green",
-        "angle_type": "front",
-        "status": "normal"
-      }
-    ],
-    "alert": false
-  }
-}
-```
-
-### HTTP API 엔드포인트
+#### 3-6. API 엔드포인트
 
 **POST `/api/detect`**
-- 얼굴 감지 및 인식 (WebSocket 폴백용)
+- 요청:
+  ```json
+  {
+    "image": "data:image/jpeg;base64,...",
+    "suspect_id": "hani"  // 선택적
+  }
+  ```
+- 응답:
+  ```json
+  {
+    "success": true,
+    "processed_image": "data:image/jpeg;base64,...",
+    "alert": false,
+    "metadata": {
+      "name": "하니",
+      "confidence": 85,
+      "status": "normal"  // "criminal" | "normal" | "unknown"
+    }
+  }
+  ```
 
 **GET `/api/persons`**
 - 등록된 모든 인물 목록 조회
+- PostgreSQL 또는 캐시에서 반환
 
 **GET `/api/logs?limit=100`**
-- 감지 로그 조회 (최근 N개)
+- 감지 로그 조회 (PostgreSQL에서)
+- 최근 N개 감지 기록 반환
 
-자세한 API 문서는 http://localhost:5000/docs 에서 확인할 수 있습니다.
+#### 3-7. 통합 구조
 
----
+```
+프론트엔드 (web/)
+  ↓ HTTP 요청 (Base64 이미지)
+백엔드 (backend/main.py)
+  ↓ InsightFace 모델 사용
+  ↓ PostgreSQL 또는 gallery_loader로 매칭
+  ↓
+PostgreSQL (persons 테이블) ← 우선
+  또는
+outputs/embeddings/ ← fallback
+  또는
+backend/database/*.json ← 레거시
+  ↓
+감지 로그 저장 → PostgreSQL (detection_logs 테이블)
+```
 
-## 🗺️ 향후 개발 로드맵
+#### 3-8. 주의사항
 
-### 완료된 기능 ✅
-- [x] WebSocket 기반 실시간 통신
-- [x] Bank 임베딩 시스템
-- [x] 옆모습 감지
-- [x] 마스크 감지 및 적응형 임계값
-- [x] 화질 기반 적응형 임계값
-- [x] 고급 오탐 방지
-- [x] PostgreSQL 데이터베이스 통합
-- [x] 박스 렌더링 최적화
-
-### 계획 중 🚧
-- [ ] 얼굴 ID 추적 (동일 인물 연속 감지)
-- [ ] 박스 위치 보간 (더 부드러운 이동)
-- [ ] 실시간 FPS 및 성능 모니터링
-- [ ] 감지 히스토리 타임라인
-- [ ] 알림 설정 및 필터링
-- [ ] Face anti-spoofing (딥페이크 방지)
-
----
-
-## 📄 라이선스
-
-MIT License
+- **PostgreSQL 설정**: 서버 실행 전에 PostgreSQL이 실행 중이어야 합니다
+- **데이터 마이그레이션**: 첫 실행 시 `python backend/init_db.py`로 데이터를 마이그레이션해야 합니다
+- **인물 등록**: 웹 UI 사용 전에 `python src/face_enroll.py`로 인물을 등록하거나, 마이그레이션을 실행해야 합니다
+- **suspect_id 매핑**: 프론트엔드의 `data-suspect-id`는 실제 `person_id`와 일치해야 합니다
+- **Fallback 동작**: PostgreSQL 연결 실패 시 자동으로 `outputs/embeddings`를 사용합니다 (서버 로그 확인)
+- **CORS**: 개발 환경에서는 CORS가 모두 허용되어 있지만, 프로덕션에서는 제한해야 합니다
 
 ---
 
-## 👨‍💻 개발자
+### 4. 임베딩 분석 도구 (Embedding Analysis)
+
+```bash
+python src/embedding_analysis.py
+```
+
+임베딩 파일의 통계 및 분포를 분석합니다.
+
+---
+
+## 설정 및 사용법
+
+### 기본 설정
+
+**임계값 (Threshold):**
+- 기본 임계값: `BASE_THRESH = 0.32`
+- 화질 기반 자동 조정:
+  - 고화질: `0.40` (오탐 방지 강화)
+  - 중화질: `0.32` (기본값)
+  - 저화질: `0.33` (인식률 유지, 최소 0.32)
+- 마스크 착용 시 추가 조정: `-0.02 ~ -0.05`
+- 최소 임계값: `0.28` (고화질), `0.30` (중화질), `0.28` (저화질)
+
+**입력 파일:**
+- 이미지: `images/source/` 폴더에 배치
+- 영상: `videos/source/` 폴더에 배치
+- 스크립트 내부에서 `input_filename` 변수 수정
+
+**출력 폴더:**
+- 입력 파일명 + 타임스탬프 기반으로 자동 생성 (`outputs/results/<파일명>_<YYYYMMDD_HHMMSS>/`)
+- 각 실행마다 새로운 폴더 생성 (결과 덮어쓰기 방지)
+- 매칭 스냅샷, 검토 대상, CSV 로그, 프레임 이미지 저장
+
+---
+
+## 기술 스택
+
+| 분야 | 기술 |
+|------|------|
+| Face Recognition | InsightFace (buffalo_l), ONNX Runtime |
+| Detection | RetinaFace (InsightFace), YOLOv12n-face |
+| Tracking | IoU-based lightweight tracking |
+| Backend API | FastAPI, Uvicorn |
+| Database | PostgreSQL, SQLAlchemy |
+| Frontend | HTML5, JavaScript, Tailwind CSS |
+| Embedding Analysis | NumPy, Matplotlib, Seaborn, Scikit-learn |
+| Video Handling | OpenCV, imageio |
+| Language | Python 3.9+ |
+
+---
+
+## 핵심 알고리즘
+
+### 1. 임베딩 기반 Similarity Matching
+
+- 얼굴 → 512-d vector (InsightFace buffalo_l)
+- L2-normalized
+- cosine similarity로 비교
+- Bank 기반 매칭 (여러 임베딩 중 최고 유사도 사용)
+
+### 2. 마스크 감지 및 적응형 임계값 ⭐ (추가 기능)
+
+- 유사도 기반 마스크 착용 가능성 추정 (0.0 ~ 1.0)
+- 마스크 가능성이 높으면 임계값 자동 조정
+- 기존 등록 이미지만으로도 마스크 쓴 얼굴 인식 가능
+
+### 3. 얼굴 각도 감지
+
+- Yaw 각도 기반 각도 분류
+- 정면(front), 측면(left/right), 프로필(profile) 자동 감지
+- 각도별 인식 성능 통계 제공
+
+### 4. 고급 오탐 방지 ⭐ (추가 기능)
+
+**bbox 기반 다중 매칭 필터링**
+- 같은 얼굴 영역에서 여러 인물로 매칭된 경우 자동 처리
+- IoU(Intersection over Union) 및 중심점 거리로 같은 얼굴 영역 판단
+- sim_gap이 충분히 크면(≥0.10) 가장 높은 유사도만 인정
+- 애매한 경우 검토 대상으로 분리
+
+**프레임 간 연속성 체크**
+- 최근 5프레임 내 같은 인물 매칭 여부 확인
+- 연속성이 없고 유사도가 낮으면 검토 대상으로 분리
+- 일시적 오탐 자동 제거
+
+**기본 오탐 방지**
+- sim_gap 체크: 최고 유사도와 두 번째 유사도 차이 확인 (최소 5% 차이 필요)
+- 중복 얼굴 필터링: 같은 프레임 내 동일 인물 중복 감지 방지
+- 최소 임계값 보장: 너무 낮은 유사도는 제외
+
+### 5. 화질 기반 적응형 임계값 ⭐ (추가 기능)
+
+- 얼굴 크기와 이미지 크기 비율로 화질 자동 추정
+- 화질 등급: high (≥150px, ≥5%), medium (≥100px, ≥2%), low (그 외)
+- 화질에 따라 동적으로 임계값 조정:
+  - 고화질: 기본값 +0.04 (오탐 방지 강화)
+  - 중화질: 기본값 유지
+  - 저화질: 기본값 -0.03 (인식률 유지)
+
+### 6. 스냅샷 저장 및 검토 시스템 ⭐ (추가 기능)
+
+- 매칭된 얼굴만 이미지로 저장
+- 프레임 번호, 인물 ID, 유사도, 화질 정보 포함
+- 검토 대상 자동 분리: 의심스러운 매칭을 `matches/review/` 폴더에 별도 저장
+- CSV 로그로 모든 감지 기록 저장 (화질, 검토 사유 포함)
+
+---
+
+## 사용 예시
+
+### 1. 인물 등록
+
+```bash
+# 1. images/enroll/ 폴더에 인물별 폴더 생성
+#    images/enroll/hani/hani.jpg
+#    images/enroll/danielle/danielle.jpg
+
+# 2. 등록 실행
+python src/face_enroll.py
+# MODE = 1로 설정하여 기본 등록 실행
+```
+
+### 2. 이미지 분석
+
+```bash
+# 1. 분석할 이미지를 images/source/ 폴더에 배치
+#    images/source/test.jpg
+
+# 2. 스크립트에서 파일명 설정
+#    input_filename = "test.jpg"
+
+# 3. 분석 실행
+python src/face_match_cctv.py
+```
+
+### 3. 영상 분석
+
+```bash
+# 1. 분석할 영상을 videos/source/ 폴더에 배치
+#    videos/source/yh.MOV
+
+# 2. 스크립트에서 파일명 설정
+#    input_filename = "yh.MOV"
+
+# 3. 분석 실행
+python src/face_match_cctv.py
+```
+
+### 4. 결과 확인
+
+```
+outputs/
+├─ embeddings/            # 임베딩 파일
+│   └─ hani/
+│      ├─ bank.npy
+│      └─ centroid.npy
+└─ results/               # 분석 결과
+   └─ yh_20240101_120000/  # 입력 파일명 + 타임스탬프
+      ├─ matches/         # 매칭된 스냅샷
+      │   ├─ match_f000123_hani_0.35.jpg
+      │   └─ review/      # 검토 대상 (의심스러운 매칭)
+      │      └─ review_f000006_danielle_0.27_low_confidence.jpg
+      ├─ logs/            # CSV 로그
+      │   └─ detection_log.csv
+      └─ frames/          # 추출된 프레임 (선택적)
+         └─ frame_000030.jpg
+```
+
+---
+
+## 향후 개발 로드맵
+
+**완료된 기능:**
+- 얼굴 각도 감지
+- 마스크 감지 및 적응형 임계값
+- 오탐 방지 (sim_gap 체크, 중복 필터링)
+- 통합 스크립트 (등록/인식)
+- 폴더 구조 정리 (source 폴더 분리)
+- 역할 분리: `face_enroll.py` (정적 이미지), `face_match_cctv.py` (영상 + 임베딩 수집)
+
+**추가된 고급 기능** ⭐ (최근 추가):
+- **임베딩 자동 수집**: 영상 분석 시 식별된 얼굴의 임베딩을 자동으로 bank에 추가하여 인식 성능 향상
+- **마스크 감지 및 적응형 임계값**: 유사도 기반 마스크 착용 가능성 추정 및 동적 임계값 조정
+- **bbox 기반 다중 매칭 필터링**: 같은 얼굴 영역에서 여러 인물 매칭 시 자동 처리
+- **프레임 간 연속성 체크**: 이전/다음 프레임에서 같은 인물 매칭 여부 확인
+- **화질 기반 적응형 임계값**: 얼굴 크기 기반 화질 추정 및 동적 임계값 조정
+- **검토 대상 자동 분리**: 의심스러운 매칭을 별도 폴더에 분리하여 수동 검토 가능
+- **타임스탬프 기반 결과 폴더**: 각 실행마다 새로운 폴더 생성 (결과 덮어쓰기 방지)
+
+**추가된 웹 통합 기능** ⭐ (최근 추가):
+- **웹 UI + FastAPI 백엔드**: 실시간 얼굴 인식 웹 서비스
+- **ngrok 통합**: 외부 접근 및 HTTPS 자동 지원
+- **PostgreSQL 데이터베이스**: 인물 정보 및 감지 로그 영구 저장
+- **동적 인물 선택**: 카드 UI로 여러 인물 동시 선택 가능
+- **WebSocket 실시간 통신**: 저지연 프레임 처리 및 결과 전송
+- **인물 감지 타임라인**: 인물별 감지 구간 시각화 및 병합 표시
+- **누적 감지 로그**: 썸네일, 정확도, 타임스탬프 포함 (5초 쿨타임)
+- **스냅샷 갤러리**: 인물별 필터링, 선택 다운로드 기능
+- **클립 관리**: 감지 구간별 영상 클립 추출 및 다운로드
+- **CSV 내보내기**: 감지 로그를 CSV 파일로 다운로드 (한글 지원)
+
+**계획 중:**
+- PostgreSQL 데이터베이스 도입
+- YOLOv9 기반 fast detector 추가
+- Face anti-spoofing (딥페이크 방지)
+- 실시간 스트리밍 지원
+
+---
+
+## 개발자
 
 **Jongwoo Shin**
 
@@ -509,18 +645,94 @@ Cloud · AI Engineering · MLOps
 
 ---
 
-## 📝 참고 문서
+## 추가된 기능 상세 설명 ⭐
 
-- [서비스 개선 이력](SERVICE_IMPROVEMENTS.md) - 기술적 진화 과정 상세 기록
-- [백엔드 설정 가이드](backend/SETUP.md) - PostgreSQL 설정 및 데이터 마이그레이션
-- [프로젝트 계획서](PROJECT_PLAN.md) - 초기 프로젝트 계획 및 설계
+> **참고**: InsightFace 모델 자체는 이미 우수한 성능을 제공합니다. 아래 기능들은 모델의 정확도를 더욱 향상시키고 오탐을 줄이기 위해 추가된 고급 필터링 및 결과 관리 기능입니다.
+
+### 1. 마스크 감지 및 적응형 임계값
+
+**문제**: 마스크를 쓴 얼굴은 일반 얼굴보다 유사도가 낮게 나와서 인식이 어려움. 기존 등록 이미지(마스크 없음)만으로 마스크 쓴 얼굴도 인식해야 함.
+
+**해결**:
+- 유사도 기반으로 마스크 착용 가능성 자동 추정 (0.0 ~ 1.0)
+- 마스크 가능성이 높으면 임계값을 자동으로 낮춤 (0.30 → 0.22~0.28)
+- 기존 등록 이미지(마스크 없음)만으로도 마스크 쓴 얼굴 인식 가능
+- 최소 임계값(0.22) 보장으로 오탐 방지
+
+**동작 방식**:
+- 유사도가 낮을수록 마스크 가능성 높음으로 판단
+- 유사도 < 0.25: 마스크 가능성 90%
+- 유사도 0.25~0.28: 마스크 가능성 70%
+- 유사도 0.28~0.32: 마스크 가능성 50%
+- 유사도 0.32~0.35: 마스크 가능성 30%
+- 유사도 ≥ 0.35: 마스크 없음
+
+### 2. bbox 기반 다중 매칭 필터링
+
+**문제**: 같은 프레임에서 같은 얼굴 영역이 여러 인물로 매칭되는 경우 (예: yujin, danielle, harin이 모두 같은 위치에서 매칭됨)
+
+**해결**:
+- IoU(Intersection over Union) 및 중심점 거리로 같은 얼굴 영역 판단
+- 같은 얼굴 영역에서 여러 인물 매칭 시:
+  - sim_gap이 충분히 크면(≥0.10) 가장 높은 유사도만 인정
+  - sim_gap이 작으면 모두 검토 대상으로 분리
+- 다른 얼굴 영역은 각각 독립적으로 평가 (실제로 여러 인물이 있을 수 있음)
+
+### 3. 프레임 간 연속성 체크
+
+**문제**: 일시적으로 잘못된 인물로 매칭되는 경우 (닮은 사람이 잠깐 나타남)
+
+**해결**:
+- 각 인물별로 최근 5프레임 내 매칭 기록 저장
+- 연속성이 없고 유사도가 낮은 경우(고화질: <0.42, 중화질: <0.40, 저화질: <0.38) 검토 대상으로 분리
+- 실제로 등장한 인물은 연속적으로 매칭되므로, 일시적 오탐 자동 제거
+
+### 4. 화질 기반 적응형 임계값
+
+**문제**: 화질이 좋은 경우와 나쁜 경우에 동일한 임계값을 사용하면 오탐이 발생하거나 인식률이 떨어짐
+
+**해결**:
+- 얼굴 크기와 이미지 크기 비율로 화질 자동 추정
+- 화질에 따라 동적으로 임계값 조정:
+  - 고화질: 더 높은 임계값 (오탐 방지)
+  - 저화질: 낮은 임계값 (인식률 유지)
+- 마스크 가능성과 함께 고려하여 최종 임계값 결정
+
+### 5. 검토 대상 자동 분리
+
+**문제**: 의심스러운 매칭을 수동으로 찾아야 함
+
+**해결**:
+- 자동으로 검토 사유 분류 및 `matches/review/` 폴더에 분리
+- 검토 사유:
+  - `same_face_multiple_persons`: 같은 얼굴에 여러 인물 매칭
+  - `ambiguous_match`: sim_gap이 작아 애매한 경우
+  - `low_confidence`: 낮은 유사도 또는 작은 sim_gap
+  - `no_continuity`: 프레임 간 연속성 없음
+- CSV 로그에 검토 사유 기록하여 후처리 가능
+
+### 6. 임베딩 자동 수집
+
+**문제**: 초기 등록 시 정면 사진만으로는 다양한 각도나 조건의 얼굴 인식이 어려움
+
+**해결**:
+- 영상 분석 시 식별된 얼굴의 임베딩을 자동으로 bank에 추가
+- 매칭 성공 시 해당 얼굴의 임베딩을 저장하여 인식 성능 향상
+- 중복 체크 후 새로운 얼굴만 추가 (유사도 0.95 이상이면 중복으로 간주)
+- 각도 정보와 함께 저장되어 다양한 각도의 얼굴 인식 개선
+- `face_enroll.py`는 정적 이미지 처리에 집중, 영상에서의 임베딩 수집은 `face_match_cctv.py`에서 처리
+
+### 7. 타임스탬프 기반 결과 폴더
+
+**문제**: 여러 번 테스트할 때마다 결과가 덮어써짐
+
+**해결**:
+- 각 실행마다 타임스탬프가 포함된 새 폴더 생성
+- 형식: `{파일명}_{YYYYMMDD_HHMMSS}`
+- 모든 실행 결과 보존 및 비교 가능
 
 ---
 
-<div align="center">
+## 라이선스
 
-**Made with ❤️ using InsightFace and FastAPI**
-
-[⬆ 맨 위로 이동](#-facewatch---실시간-얼굴-식별추적-시스템)
-
-</div>
+MIT License

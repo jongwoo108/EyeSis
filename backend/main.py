@@ -7,6 +7,7 @@ import base64
 import cv2
 import numpy as np
 from pathlib import Path
+import shutil
 from typing import Optional, List, Dict, Set
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,7 +35,7 @@ _ensure_cuda_in_path()
 from insightface.app import FaceAnalysis
 from src.utils.device_config import get_device_id, safe_prepare_insightface
 from src.utils.gallery_loader import load_gallery, match_with_bank, match_with_bank_detailed
-from src.utils.face_angle_detector import estimate_face_angle, is_diverse_angle, is_all_angles_collected
+from src.utils.face_angle_detector import estimate_face_angle, is_diverse_angle, is_all_angles_collected, check_face_occlusion
 from src.utils.mask_detector import estimate_mask_from_similarity, get_adjusted_threshold, estimate_face_quality
 from src.face_enroll import get_main_face_embedding, save_embeddings, l2_normalize
 
@@ -786,11 +787,12 @@ async def add_embedding_to_dynamic_bank_async(person_id: str, embedding: np.ndar
     else:
         angles_info = {"angle_types": [], "yaw_angles": []}
     
-    # 각도 타입이 없으면 스킵
+    # 각도 타입이 없으면 기본값 사용 (완화)
     if not angle_type or angle_type == "unknown":
+        # 각도 정보가 없어도 "front"로 기본값 설정하여 수집 허용
+        angle_type = "front"
         if verbose:
-            print(f"     ⏭ Dynamic Bank 스킵 (각도 정보 없음)")
-        return False
+            print(f"     ℹ️ Dynamic Bank: 각도 정보 없음, 기본값 'front'로 설정")
     
     # 각도별 다양성 체크
     collected_angles = angles_info.get("angle_types", [])
@@ -1204,6 +1206,7 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
 
     # 3. 먼저 모든 얼굴에 대해 매칭 결과 수집 (오인식 방지 필터링을 위해)
     face_results = []
+    face_objects = []  # face 객체를 인덱스로 매핑하여 저장 (Dynamic Bank 검증용)
     for face in faces:
         # 바운딩 박스 좌표 (정수형 변환)
         # 전처리된 이미지의 좌표를 원본 이미지 좌표로 변환
@@ -1510,6 +1513,7 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                 print(f"  🆕 [MASKED CAND] 새 track 생성: {best_person_id} (track_id={track_id}, base_sim={base_sim:.3f})")
         
         # 결과 저장 (나중에 필터링)
+        face_index = len(face_results)  # 현재 인덱스
         face_results.append({
             "bbox": box.tolist(),
             "embedding": embedding_normalized,
@@ -1530,8 +1534,10 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             "bank_type": bank_type,
             "is_masked_candidate": is_masked_candidate,
             "candidate_frames_count": candidate_frames_count,
-            "track_id": track_id
+            "track_id": track_id,
+            "face_index": face_index  # face 객체 인덱스 저장
         })
+        face_objects.append(face)  # face 객체 저장
     
     # 4. 같은 얼굴 영역에서 여러 인물로 매칭되는 경우 필터링 (오인식 방지)
     print(f"🔍 [필터링 전] face_results 개수: {len(face_results)}")
@@ -1654,56 +1660,142 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                 except Exception as e:
                     print(f"⚠️ 로그 저장 실패: {e}")
             
-            # 동적 Bank 자동 추가 (매칭 성공 시) - 각도별 다양성 체크 및 수집 완료 로직 포함
+            # 동적 Bank 자동 추가 (매칭 성공 시) - 강화된 필터링 적용
             # 목적: 정면으로 식별된 인물에 대해 CCTV 영상에서 움직일 때 추가 각도 임베딩을 수집
+            # 개선: 오인식으로 인한 임베딩 오염 방지를 위한 검증 강화
             AUTO_ADD_TO_DYNAMIC_BANK = True
             BANK_DUPLICATE_THRESHOLD = 0.95
             
+            # 1단계 개선: Dynamic Bank 입력 필터 강화 (Hygiene Check)
+            # 검증 1: Base Bank와의 최소 유사도 검증 (>= 0.6)
+            # 검증 2: 고화질 검증 강화 (얼굴 크기 >= 200px)
+            # 검증 3: Occlusion 없는 상태 검증 (랜드마크 기반)
+            
+            should_add_to_dynamic_bank = False
+            validation_failures = []
+            
             if AUTO_ADD_TO_DYNAMIC_BANK:
-                # 동적 bank에 추가 (각도별 다양성 체크 포함)
-                # 모든 각도(front, left, right, top) 수집 가능
-                learning_events.append({
-                    "person_id": person_id,
-                    "person_name": name,
-                    "angle_type": angle_type,
-                    "yaw_angle": yaw_angle,
-                    "embedding": embedding_normalized.tolist(),  # 파일 저장용
-                    "bank_type": "dynamic"  # 동적 bank로 저장
-                })
+                # 검증 1: Base Bank와의 최소 유사도 검증
+                # 새로 들어온 임베딩이 현재 매칭된 인물의 Base Bank와 비교했을 때
+                # 최소한의 유사도(0.6 이상)는 넘어야 Dynamic Bank에 추가 허용
+                # ⚠️ 완화: 매칭 성공 시에는 이미 유사도가 threshold 이상이므로 0.5로 완화
+                MIN_BASE_SIMILARITY_FOR_DYNAMIC_BANK = 0.5  # 0.6 -> 0.5로 완화
+                
+                base_sim_result = result.get("base_sim", 0.0)
+                if base_sim_result >= MIN_BASE_SIMILARITY_FOR_DYNAMIC_BANK:
+                    # 검증 2: 고화질 검증 강화
+                    # 얼굴 크기 최소 200px 이상 등 기준 상향
+                    # ⚠️ 완화: 150px로 완화 (저화질 영상도 수집 가능하도록)
+                    face_width = box[2] - box[0]
+                    face_height = box[3] - box[1]
+                    face_size = max(face_width, face_height)
+                    MIN_FACE_SIZE_FOR_DYNAMIC_BANK = 150  # 200 -> 150으로 완화
+                    
+                    if face_size >= MIN_FACE_SIZE_FOR_DYNAMIC_BANK:
+                        # 검증 3: Occlusion 없는 상태 검증
+                        # 주요 랜드마크(눈, 코, 입)가 모두 선명하게 보일 때만 Dynamic Bank에 추가
+                        # 마스크나 손으로 가린 상태의 임베딩은 실시간 매칭에만 쓰고 저장하지 않음
+                        # ⚠️ 완화: Occlusion 검증을 선택적으로 적용 (심각한 occlusion만 제외)
+                        face_index = result.get("face_index", -1)
+                        if face_index >= 0 and face_index < len(face_objects):
+                            face_obj = face_objects[face_index]
+                            # Occlusion 검증 완화: 심각한 occlusion만 제외
+                            has_severe_occlusion = False
+                            try:
+                                # check_face_occlusion이 True를 반환하면 occlusion 없음
+                                # False를 반환하면 occlusion 있음
+                                has_severe_occlusion = not check_face_occlusion(face_obj, box)
+                            except Exception as e:
+                                print(f"  ⚠️ Occlusion 검증 오류: {e}, 기본값으로 진행")
+                                has_severe_occlusion = False
+                            
+                            if not has_severe_occlusion:
+                                should_add_to_dynamic_bank = True
+                            else:
+                                validation_failures.append(f"occlusion detected (랜드마크 검증 실패)")
+                        else:
+                            # face_index가 없어도 진행 (완화)
+                            should_add_to_dynamic_bank = True
+                            print(f"  ⚠️ [DYNAMIC BANK] face_index 없음, 기본값으로 진행: face_index={face_index}")
+                    else:
+                        validation_failures.append(f"face_size={face_size}px < {MIN_FACE_SIZE_FOR_DYNAMIC_BANK}px (고화질 검증 실패)")
+                else:
+                    validation_failures.append(f"base_sim={base_sim_result:.3f} < {MIN_BASE_SIMILARITY_FOR_DYNAMIC_BANK} (Base Bank 유사도 검증 실패)")
+                
+                if should_add_to_dynamic_bank:
+                    # 모든 검증 통과: 동적 bank에 추가 (각도별 다양성 체크 포함)
+                    # 모든 각도(front, left, right, top) 수집 가능
+                    learning_events.append({
+                        "person_id": person_id,
+                        "person_name": name,
+                        "angle_type": angle_type,
+                        "yaw_angle": yaw_angle,
+                        "embedding": embedding_normalized.tolist(),  # 파일 저장용
+                        "bank_type": "dynamic"  # 동적 bank로 저장
+                    })
+                    base_sim_result = result.get("base_sim", 0.0)
+                    print(f"  ✅ [DYNAMIC BANK] 검증 통과: {person_id} (base_sim={base_sim_result:.3f}, face_size={face_size}px, angle={angle_type})")
+                else:
+                    # 검증 실패: Dynamic Bank에 추가하지 않음
+                    print(f"  ⏭ [DYNAMIC BANK] 검증 실패: {person_id} | 이유: {', '.join(validation_failures)}")
             
             # Bank 자동 추가 (매칭 성공 시) - base bank는 절대 자동 추가하지 않음
-            # masked bank는 이미 bbox tracking 로직에서 처리됨
-            # 여기서는 일반적인 측면/프로파일 각도 학습만 처리 (masked bank에만)
+            # Dynamic Bank는 위에서 이미 처리됨 (모든 각도 수집 가능)
+            # Masked Bank는 마스크 쓴 얼굴만 수집
+            # 여기서는 추가적인 각도 학습을 위해 Dynamic Bank에 더 많이 추가하도록 개선
+            
+            # Dynamic Bank에 추가되지 않은 경우, 추가 시도 (검증 완화)
+            # 목적: 다양한 각도의 임베딩을 더 많이 수집하여 인식률 향상
+            if not should_add_to_dynamic_bank and AUTO_ADD_TO_DYNAMIC_BANK:
+                # 완화된 조건으로 재시도
+                # 조건 1: Base Bank 유사도 >= 0.4 (더 완화)
+                base_sim_result = result.get("base_sim", 0.0)
+                MIN_BASE_SIMILARITY_RELAXED = 0.4
+                
+                # 조건 2: 얼굴 크기 >= 100px (더 완화)
+                face_width = box[2] - box[0]
+                face_height = box[3] - box[1]
+                face_size = max(face_width, face_height)
+                MIN_FACE_SIZE_RELAXED = 100
+                
+                if base_sim_result >= MIN_BASE_SIMILARITY_RELAXED and face_size >= MIN_FACE_SIZE_RELAXED:
+                    # 완화된 조건으로 Dynamic Bank에 추가
+                    learning_events.append({
+                        "person_id": person_id,
+                        "person_name": name,
+                        "angle_type": angle_type or "front",  # 각도 정보 없으면 "front"
+                        "yaw_angle": yaw_angle or 0.0,
+                        "embedding": embedding_normalized.tolist(),
+                        "bank_type": "dynamic"
+                    })
+                    print(f"  ✅ [DYNAMIC BANK] 완화된 조건으로 추가: {person_id} (base_sim={base_sim_result:.3f}, face_size={face_size}px, angle={angle_type or 'front'})")
+            
+            # Masked Bank 추가 (마스크 쓴 얼굴만, 측면/프로파일 각도)
             AUTO_ADD_TO_BANK = True
+            important_angles = ["left_profile", "right_profile", "left", "right", "front"]  # front도 추가
             
-            # Bank 자동 학습 안정화 조건:
-            # 1) 정면은 제외 (측면/프로파일만)
-            # 2) 고화질 + 고유사도 조건 (확신도 높은 프레임만)
-            # 3) base bank는 절대 자동 추가하지 않음 (오염 방지)
-            important_angles = ["left_profile", "right_profile", "left", "right"]
-            
-            if AUTO_ADD_TO_BANK:
-                # 조건 1: 측면/프로파일 각도만 허용 (정면 제외)
-                is_profile_angle = angle_type in important_angles
-                
-                # 조건 2: 고화질 + 고유사도 (main_threshold + 0.05 이상)
+            if AUTO_ADD_TO_BANK and bank_type == "masked":
+                # 조건: 고화질 + 고유사도 (main_threshold 이상)
                 is_high_confidence = (face_quality == "high" and 
-                                     max_similarity >= (main_threshold + 0.05))
+                                     max_similarity >= main_threshold)
                 
-                # masked bank에만 추가 (base bank는 절대 추가하지 않음)
-                if is_profile_angle and is_high_confidence and bank_type == "masked":
+                # 모든 각도에서 masked bank에 추가 가능 (측면/프로파일 우선, front도 허용)
+                is_valid_angle = angle_type in important_angles if angle_type else True
+                
+                if is_high_confidence and is_valid_angle:
                     # 메모리에서 즉시 업데이트 (실시간 반영)
                     added = update_gallery_cache_in_memory(person_id, embedding_normalized, bank_type="masked")
                     if added:
-                        # 학습 이벤트 기록 (masked bank만)
+                        # 학습 이벤트 기록 (masked bank)
                         learning_events.append({
                             "person_id": person_id,
                             "person_name": name,
-                            "angle_type": angle_type,
-                            "yaw_angle": yaw_angle,
-                            "embedding": embedding_normalized.tolist(),  # 파일 저장용
+                            "angle_type": angle_type or "front",
+                            "yaw_angle": yaw_angle or 0.0,
+                            "embedding": embedding_normalized.tolist(),
                             "bank_type": "masked"
                         })
+                        print(f"  ✅ [MASKED BANK] 추가: {person_id} (angle={angle_type or 'front'}, sim={max_similarity:.3f})")
             
             # 박스 정보 설정 (person_id 포함)
             box_info = {
@@ -1991,9 +2083,15 @@ async def websocket_detect(websocket: WebSocket):
                     
                     # 범죄자 감지 시 스냅샷 Base64 인코딩 추가
                     snapshot_base64 = None
-                    video_timestamp = None
                     
-                    print(f"🔍 WebSocket 감지 결과: alert={result.get('alert')}, detections={len(result.get('detections', []))}")
+                    # 비디오 타임스탬프 계산 (모든 응답에 포함)
+                    if video_time is not None:
+                        video_timestamp = float(video_time)
+                    else:
+                        # 프레임 ID를 사용하여 대략적인 타임스탬프 계산 (10 FPS 가정)
+                        video_timestamp = frame_id / 10.0
+                    
+                    print(f"🔍 WebSocket 감지 결과: alert={result.get('alert')}, detections={len(result.get('detections', []))}, video_time={video_timestamp:.2f}s")
                     
                     if result.get("alert"):  # 범죄자 감지됨
                         print(f"🚨 범죄자 감지됨! 스냅샷 생성 중...")
@@ -2002,14 +2100,6 @@ async def websocket_detect(websocket: WebSocket):
                             success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                             if success and buffer is not None and len(buffer) > 0:
                                 snapshot_base64 = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
-                                
-                                # 비디오 타임스탬프 계산 (초 단위)
-                                # 클라이언트에서 전송한 video_time이 있으면 사용, 없으면 프레임 ID 기반 계산
-                                if video_time is not None:
-                                    video_timestamp = float(video_time)
-                                else:
-                                    # 프레임 ID를 사용하여 대략적인 타임스탬프 계산 (10 FPS 가정)
-                                    video_timestamp = frame_id / 10.0
                                 print(f"✅ 스냅샷 생성 완료: 크기={len(snapshot_base64)} bytes, 타임스탬프={video_timestamp:.1f}s")
                             else:
                                 print(f"⚠️ WebSocket: 스냅샷 인코딩 실패 (success={success}, buffer={buffer is not None})")
@@ -2023,6 +2113,7 @@ async def websocket_detect(websocket: WebSocket):
                         "type": "detection",
                         "data": {
                             "frame_id": frame_id,
+                            "video_timestamp": video_timestamp,  # 항상 포함
                             **result
                         }
                     }
@@ -2030,10 +2121,10 @@ async def websocket_detect(websocket: WebSocket):
                     # 범죄자 감지 시 스냅샷 추가
                     if snapshot_base64:
                         response_data["data"]["snapshot_base64"] = snapshot_base64
-                        response_data["data"]["video_timestamp"] = video_timestamp
                         print(f"📤 WebSocket 응답에 스냅샷 포함: {len(snapshot_base64)} bytes")
                     
                     await websocket.send_json(response_data)
+
 
                     
                     # 학습 이벤트가 있으면 파일 저장 (비동기, 응답 후)
@@ -2255,6 +2346,202 @@ async def get_persons(db: Session = Depends(get_db)):
             "persons": []
         }
 
+@app.delete("/api/persons/{person_id}")
+async def delete_person(person_id: str, db: Session = Depends(get_db)):
+    """
+    인물 삭제 API - 인물 데이터와 관련된 모든 파일 및 DB 레코드 삭제
+    
+    Args:
+        person_id: 삭제할 인물의 고유 ID
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "status": "success",
+            "message": "Deleted successfully"
+        }
+    """
+    global persons_cache, gallery_base_cache, gallery_masked_cache
+    
+    try:
+        print(f"🗑️ [DELETE] 인물 삭제 요청: person_id={person_id}")
+        
+        # 1. DB에서 인물 정보 조회
+        from backend.database import get_person_by_id
+        person = get_person_by_id(db, person_id)
+        
+        if not person:
+            raise HTTPException(status_code=404, detail=f"인물을 찾을 수 없습니다: {person_id}")
+        
+        person_name = person.name
+        print(f"  📋 삭제 대상: {person_name} ({person_id})")
+        
+        # 2. 안전성 검사: person_id가 안전한 문자열인지 확인 (경로 조작 방지)
+        if not person_id or not person_id.replace('_', '').replace('-', '').isalnum():
+            raise HTTPException(status_code=400, detail="잘못된 person_id 형식입니다.")
+        
+        # 3. 파일 시스템 정리 (DB 삭제 전에 먼저 수행)
+        deleted_files = []
+        
+        # 3-1. images/enroll/{person_id}/ 폴더 삭제
+        enroll_dir = PROJECT_ROOT / "images" / "enroll" / person_id
+        if enroll_dir.exists() and enroll_dir.is_dir():
+            # 안전성 검사: 경로가 올바른지 확인
+            if str(enroll_dir).startswith(str(PROJECT_ROOT / "images" / "enroll")):
+                try:
+                    shutil.rmtree(enroll_dir)
+                    deleted_files.append(f"images/enroll/{person_id}/")
+                    print(f"  ✅ 이미지 폴더 삭제: {enroll_dir}")
+                except Exception as e:
+                    print(f"  ⚠️ 이미지 폴더 삭제 실패: {e}")
+            else:
+                print(f"  ⚠️ 안전성 검사 실패: 잘못된 경로 {enroll_dir}")
+        
+        # 3-2. outputs/embeddings/{person_id}/ 폴더 삭제
+        embedding_dir = EMBEDDINGS_DIR / person_id
+        if embedding_dir.exists() and embedding_dir.is_dir():
+            # 안전성 검사: 경로가 올바른지 확인
+            if str(embedding_dir).startswith(str(EMBEDDINGS_DIR)):
+                try:
+                    shutil.rmtree(embedding_dir)
+                    deleted_files.append(f"outputs/embeddings/{person_id}/")
+                    print(f"  ✅ 임베딩 폴더 삭제: {embedding_dir}")
+                except Exception as e:
+                    print(f"  ⚠️ 임베딩 폴더 삭제 실패: {e}")
+            else:
+                print(f"  ⚠️ 안전성 검사 실패: 잘못된 경로 {embedding_dir}")
+        
+        # 4. 데이터베이스에서 레코드 삭제
+        try:
+            db.delete(person)
+            db.commit()
+            print(f"  ✅ DB 레코드 삭제 완료: {person_id}")
+        except Exception as e:
+            db.rollback()
+            print(f"  ❌ DB 레코드 삭제 실패: {e}")
+            raise HTTPException(status_code=500, detail=f"데이터베이스 삭제 중 오류 발생: {str(e)}")
+        
+        # 5. 캐시 갱신
+        try:
+            # 전역 함수 직접 호출
+            load_persons_from_db(db)
+            print(f"  ✅ 캐시 갱신 완료")
+        except Exception as cache_error:
+            print(f"  ⚠️ 캐시 갱신 실패: {cache_error}")
+            # 캐시 갱신 실패 시 수동으로 제거
+            global persons_cache
+            if persons_cache:
+                persons_cache = [p for p in persons_cache if p.get('id') != person_id]
+        
+        # 6. 갤러리 캐시에서도 제거
+        if person_id in gallery_base_cache:
+            del gallery_base_cache[person_id]
+        if person_id in gallery_masked_cache:
+            del gallery_masked_cache[person_id]
+        
+        print(f"  ✅ 인물 삭제 완료: {person_name} ({person_id})")
+        print(f"  📁 삭제된 파일: {', '.join(deleted_files) if deleted_files else '없음'}")
+        
+        return {
+            "status": "success",
+            "message": f"인물 '{person_name}' 삭제 완료",
+            "deleted_files": deleted_files
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [DELETE] 인물 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"삭제 중 오류 발생: {str(e)}")
+
+@app.put("/api/persons/{person_id}")
+async def update_person(person_id: str, db: Session = Depends(get_db),
+                       name: str = Form(None),
+                       person_type: str = Form(None)):
+    """
+    인물 정보 수정 API - 이름 및 카테고리 수정
+    
+    Args:
+        person_id: 수정할 인물의 고유 ID
+        name: 새로운 이름 (선택)
+        person_type: 새로운 카테고리 (선택)
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "status": "success",
+            "person": {...}  # 수정된 인물 정보
+        }
+    """
+    global persons_cache
+    
+    try:
+        print(f"✏️ [UPDATE] 인물 수정 요청: person_id={person_id}")
+        
+        # 1. DB에서 인물 정보 조회
+        from backend.database import get_person_by_id
+        person = get_person_by_id(db, person_id)
+        
+        if not person:
+            raise HTTPException(status_code=404, detail=f"인물을 찾을 수 없습니다: {person_id}")
+        
+        # 2. 수정할 필드 업데이트
+        updated = False
+        
+        if name is not None and name.strip():
+            old_name = person.name
+            person.name = name.strip()
+            print(f"  📝 이름 변경: {old_name} → {person.name}")
+            updated = True
+        
+        if person_type is not None:
+            old_type = person.person_type
+            # person_type 유효성 검사
+            valid_types = ["criminal", "missing", "dementia", "child", "wanted"]
+            if person_type not in valid_types:
+                raise HTTPException(status_code=400, detail=f"유효하지 않은 person_type: {person_type}")
+            
+            person.person_type = person_type
+            person.is_criminal = (person_type in ["criminal", "wanted"])
+            print(f"  📝 타입 변경: {old_type} → {person_type}")
+            updated = True
+        
+        if not updated:
+            raise HTTPException(status_code=400, detail="수정할 정보가 없습니다")
+        
+        # 3. DB 커밋
+        db.commit()
+        db.refresh(person)
+        print(f"  ✅ DB 업데이트 완료")
+        
+        # 4. 캐시 갱신
+        try:
+            load_persons_from_db(db)
+            print(f"  ✅ 캐시 갱신 완료")
+        except Exception as cache_error:
+            print(f"  ⚠️ 캐시 갱신 실패: {cache_error}")
+        
+        # 5. 응답 반환
+        return {
+            "status": "success",
+            "message": f"인물 정보가 수정되었습니다",
+            "person": {
+                "id": person.person_id,
+                "name": person.name,
+                "person_type": person.person_type,
+                "is_criminal": person.is_criminal
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [UPDATE] 인물 수정 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"수정 중 오류 발생: {str(e)}")
+
+
 @app.get("/api/logs")
 async def get_logs(limit: int = 100, db: Session = Depends(get_db)):
     """감지 로그 조회"""
@@ -2290,7 +2577,7 @@ async def get_logs(limit: int = 100, db: Session = Depends(get_db)):
 async def enroll_person(
     person_id: str = Form(...),
     name: str = Form(...),
-    person_type: str = Form("criminal"),  # "criminal" 또는 "missing"
+    person_type: str = Form("criminal"),  # "criminal", "missing", "dementia", "child", "wanted"
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -2300,7 +2587,7 @@ async def enroll_person(
     Args:
         person_id: 인물 고유 ID (자동 생성됨)
         name: 인물 이름
-        person_type: 인물 타입 ("criminal" 또는 "missing")
+        person_type: 인물 타입 ("criminal", "missing", "dementia", "child", "wanted")
         image: 정면 사진 파일 (JPEG, PNG 등)
         db: 데이터베이스 세션
     
@@ -2316,8 +2603,9 @@ async def enroll_person(
     global persons_cache, gallery_base_cache, gallery_masked_cache
     
     try:
-        # is_criminal 결정 (criminal=True, missing=False)
-        is_criminal = (person_type == "criminal")
+        # is_criminal 결정 (criminal, wanted=True, 나머지=False)
+        # 강력 범죄자와 지명 수배자는 범죄자로 분류
+        is_criminal = (person_type in ["criminal", "wanted"])
         print(f"📝 [ENROLL] 인물 등록 요청: person_id={person_id}, name={name}, type={person_type}, is_criminal={is_criminal}")
         
         # 이미지 파일 읽기
@@ -2395,12 +2683,17 @@ async def enroll_person(
             np.save(centroid_base_path, centroid)
             
             # Backward compatibility: centroid.npy도 업데이트
+            # 레거시 파일은 gallery_loader.py에서 fallback으로 사용될 수 있음
             legacy_centroid_path = person_dir / "centroid.npy"
             np.save(legacy_centroid_path, centroid)
             
-            # 데이터베이스 업데이트
+            # 데이터베이스 업데이트 (person_type을 info에 저장)
             existing_person.name = name
             existing_person.is_criminal = is_criminal
+            if not existing_person.info:
+                existing_person.info = {}
+            existing_person.info["person_type"] = person_type
+            existing_person.info["category"] = person_type
             existing_person.set_embedding(centroid)  # centroid를 대표 임베딩으로 사용
             db.commit()
             db.refresh(existing_person)
@@ -2417,9 +2710,10 @@ async def enroll_person(
             # Centroid는 save_embeddings에서 이미 저장됨
             centroid = embedding_normalized  # 단일 임베딩이므로 그대로 사용
             
-            # 데이터베이스에 저장
+            # 데이터베이스에 저장 (person_type을 info에 저장)
             from backend.database import create_person
-            create_person(db, person_id, name, centroid, is_criminal=is_criminal)
+            info = {"person_type": person_type, "category": person_type}
+            create_person(db, person_id, name, centroid, is_criminal=is_criminal, info=info)
             
             embedding_count = 1
             print(f"  ✅ 새 인물 등록 완료: {person_id}")

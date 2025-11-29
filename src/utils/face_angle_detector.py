@@ -193,6 +193,86 @@ def is_all_angles_collected(collected_angles: list[str]) -> bool:
     return True
 
 
+def check_face_occlusion(face, bbox: Optional[Tuple[int, int, int, int]] = None) -> bool:
+    """
+    랜드마크 기반으로 얼굴 가림(Occlusion) 여부 확인
+    
+    주요 랜드마크(눈, 코, 입)가 모두 선명하게 보이는지 확인합니다.
+    마스크나 손으로 가린 상태의 얼굴은 Dynamic Bank에 저장하지 않기 위해 사용됩니다.
+    
+    Args:
+        face: InsightFace의 face 객체 (kps 속성 필요)
+        bbox: (x1, y1, x2, y2) 얼굴 bounding box (선택적, 랜드마크 유효성 검증용)
+    
+    Returns:
+        True면 occlusion 없음 (모든 랜드마크가 선명함), False면 occlusion 있음
+    """
+    if not hasattr(face, 'kps') or face.kps is None:
+        # 랜드마크가 없으면 occlusion 상태로 간주
+        return False
+    
+    kps = face.kps  # (5, 2) 형태: [x, y] 좌표
+    
+    # 랜드마크 포인트
+    left_eye = kps[0]   # 왼쪽 눈
+    right_eye = kps[1]  # 오른쪽 눈
+    nose = kps[2]       # 코
+    left_mouth = kps[3] # 왼쪽 입꼬리
+    right_mouth = kps[4] # 오른쪽 입꼬리
+    
+    # bbox가 제공된 경우, 랜드마크가 bbox 내에 있는지 확인
+    if bbox is not None:
+        x1, y1, x2, y2 = bbox
+        for i, kp in enumerate(kps):
+            kp_x, kp_y = kp[0], kp[1]
+            # 랜드마크가 bbox 밖에 있으면 occlusion으로 간주
+            if kp_x < x1 or kp_x > x2 or kp_y < y1 or kp_y > y2:
+                return False
+    
+    # 1. 눈 간격 검증: 두 눈이 너무 가까우면(occlusion) 또는 너무 멀면(비정상) 문제
+    eye_distance = np.sqrt((right_eye[0] - left_eye[0])**2 + 
+                           (right_eye[1] - left_eye[1])**2)
+    
+    # 눈 간격이 너무 작으면(0.1 이하) occlusion으로 간주
+    # (정상적인 얼굴에서는 눈 간격이 최소한 얼굴 너비의 20% 이상이어야 함)
+    if eye_distance < 1e-6:
+        return False
+    
+    # 2. 코 위치 검증: 코가 눈 중심과 너무 멀리 떨어져 있으면 occlusion 가능성
+    eye_center_x = (left_eye[0] + right_eye[0]) / 2
+    eye_center_y = (left_eye[1] + right_eye[1]) / 2
+    nose_offset_x = abs(nose[0] - eye_center_x)
+    nose_offset_y = abs(nose[1] - eye_center_y)
+    
+    # 코가 눈 중심에서 너무 멀리 떨어져 있으면(눈 간격의 50% 이상) occlusion 가능성
+    if nose_offset_x > eye_distance * 0.5 or nose_offset_y > eye_distance * 0.5:
+        return False
+    
+    # 3. 입 위치 검증: 입이 눈과 코 사이의 정상적인 위치에 있는지 확인
+    mouth_center_x = (left_mouth[0] + right_mouth[0]) / 2
+    mouth_center_y = (left_mouth[1] + right_mouth[1]) / 2
+    
+    # 입이 코보다 위에 있으면(비정상) occlusion 가능성
+    if mouth_center_y < nose[1]:
+        return False
+    
+    # 4. 입 너비 검증: 입이 너무 좁으면(occlusion) 문제
+    mouth_width = np.sqrt((right_mouth[0] - left_mouth[0])**2 + 
+                          (right_mouth[1] - left_mouth[1])**2)
+    
+    # 입 너비가 눈 간격의 30% 미만이면 occlusion 가능성
+    if mouth_width < eye_distance * 0.3:
+        return False
+    
+    # 5. 랜드마크 포인트 유효성 검증: 모든 포인트가 유효한 좌표를 가지고 있는지
+    for kp in kps:
+        if np.isnan(kp[0]) or np.isnan(kp[1]) or np.isinf(kp[0]) or np.isinf(kp[1]):
+            return False
+    
+    # 모든 검증 통과: occlusion 없음
+    return True
+
+
 
 
 

@@ -1,6 +1,6 @@
 """
-임베딩 초기화 스크립트
-모델 평가를 위해 임베딩을 초기화하고 새로 등록할 수 있도록 준비합니다.
+Dynamic Bank와 Masked Bank만 삭제하는 스크립트
+Base Bank는 유지하여 새로운 검증 로직 테스트를 위한 깨끗한 환경을 만듭니다.
 """
 import argparse
 import shutil
@@ -14,9 +14,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 EMBEDDINGS_DIR = PROJECT_ROOT / "outputs" / "embeddings"
 
 
-def reset_person_embeddings(person_id: str, backup: bool = True) -> bool:
+def cleanup_person_banks(person_id: str, backup: bool = True) -> bool:
     """
-    특정 인물의 임베딩 파일 초기화
+    특정 인물의 Dynamic Bank와 Masked Bank만 삭제 (Base Bank는 유지)
     
     Args:
         person_id: 인물 ID
@@ -33,24 +33,45 @@ def reset_person_embeddings(person_id: str, backup: bool = True) -> bool:
     
     # 백업 폴더 생성
     if backup:
-        backup_dir = person_dir / "backup_before_reset"
+        backup_dir = person_dir / "backup_before_cleanup"
         if backup_dir.exists():
             shutil.rmtree(backup_dir)
         backup_dir.mkdir(exist_ok=True)
         print(f"  💾 백업 폴더 생성: {backup_dir}")
     
-    # 삭제할 파일 목록
+    # 삭제할 파일 목록 (Dynamic Bank와 Masked Bank 관련 파일만)
     files_to_delete = [
-        "bank_base.npy",
-        "bank_masked.npy",
+        # Dynamic Bank 관련
         "bank_dynamic.npy",
-        "bank.npy",  # 레거시
-        "centroid_base.npy",
-        "centroid_masked.npy",
-        "centroid.npy",  # 레거시
-        "angles_base.json",
+        "angles_dynamic.json",
+        "collection_status.json",
+        # 각도별 Dynamic Bank 파일들
+        "bank_front.npy",
+        "bank_left.npy",
+        "bank_right.npy",
+        "bank_top.npy",
+        "bank_left_profile.npy",
+        "bank_right_profile.npy",
+        "embedding_front.npy",
+        "embedding_left.npy",
+        "embedding_right.npy",
+        "embedding_top.npy",
+        "embedding_left_profile.npy",
+        "embedding_right_profile.npy",
+        # Masked Bank 관련
+        "bank_masked.npy",
         "angles_masked.json",
-        "angles.json"  # 레거시
+        # 레거시 파일 (Dynamic/Masked 관련)
+        "bank.npy",  # 레거시 (Base가 아닌 경우)
+        "centroid.npy",  # 레거시 (Dynamic/Masked 관련일 수 있음)
+        "angles.json",  # 레거시
+    ]
+    
+    # Base Bank 파일은 유지 (삭제하지 않음)
+    files_to_keep = [
+        "bank_base.npy",
+        "centroid_base.npy",
+        "angles_base.json",
     ]
     
     deleted_files = []
@@ -65,21 +86,33 @@ def reset_person_embeddings(person_id: str, backup: bool = True) -> bool:
             file_path.unlink()
             deleted_files.append(filename)
     
+    # Base Bank 파일 존재 여부 확인
+    base_bank_path = person_dir / "bank_base.npy"
+    has_base_bank = base_bank_path.exists()
+    
     if deleted_files:
         print(f"  🗑️ 삭제된 파일 ({len(deleted_files)}개):")
         for f in deleted_files:
             print(f"     - {f}")
         if backup:
             print(f"  ✅ 백업 완료: {backup_dir}")
+        
+        if has_base_bank:
+            print(f"  ✅ Base Bank 유지: bank_base.npy")
+        else:
+            print(f"  ⚠️ Base Bank 없음: bank_base.npy (새로 등록 필요)")
+        
         return True
     else:
         print(f"  ℹ️ 삭제할 파일이 없습니다.")
+        if has_base_bank:
+            print(f"  ✅ Base Bank 유지: bank_base.npy")
         return False
 
 
-def reset_all_embeddings(backup: bool = True) -> int:
+def cleanup_all_banks(backup: bool = True) -> int:
     """
-    모든 인물의 임베딩 파일 초기화
+    모든 인물의 Dynamic Bank와 Masked Bank 삭제 (Base Bank는 유지)
     
     Args:
         backup: 기존 파일 백업 여부
@@ -101,7 +134,7 @@ def reset_all_embeddings(backup: bool = True) -> int:
     for person_dir in person_dirs:
         person_id = person_dir.name
         print(f"\n👤 {person_id}:")
-        if reset_person_embeddings(person_id, backup=backup):
+        if cleanup_person_banks(person_id, backup=backup):
             success_count += 1
     
     return success_count
@@ -109,12 +142,12 @@ def reset_all_embeddings(backup: bool = True) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="임베딩 초기화 스크립트 - 모델 평가를 위해 임베딩을 초기화합니다."
+        description="Dynamic Bank와 Masked Bank만 삭제하는 스크립트 - Base Bank는 유지합니다."
     )
     parser.add_argument(
         "--person-id",
         type=str,
-        help="특정 인물 ID만 초기화 (없으면 전체)"
+        help="특정 인물 ID만 처리 (없으면 전체)"
     )
     parser.add_argument(
         "--no-backup",
@@ -130,13 +163,17 @@ def main():
     args = parser.parse_args()
     
     print("=" * 70)
-    print("🔄 임베딩 초기화 스크립트")
+    print("🧹 Dynamic/Masked Bank 정리 스크립트")
     print("=" * 70)
+    print("\n📋 작업 내용:")
+    print("   ✅ 유지: bank_base.npy (Base Bank)")
+    print("   🗑️  삭제: bank_dynamic.npy, bank_masked.npy")
+    print("   🗑️  삭제: angles_dynamic.json, angles_masked.json")
+    print("   🗑️  삭제: collection_status.json")
     print("\n⚠️  주의사항:")
-    print("   - 이 스크립트는 임베딩 파일을 삭제합니다.")
-    print("   - 삭제된 임베딩은 복구할 수 없습니다 (백업 옵션 사용 시 제외).")
-    print("   - 데이터베이스의 Person 정보는 유지됩니다.")
-    print("   - 초기화 후 새로 등록(enroll)해야 합니다.")
+    print("   - Dynamic Bank와 Masked Bank 파일만 삭제됩니다.")
+    print("   - Base Bank는 유지되어 새로운 검증 로직 테스트가 가능합니다.")
+    print("   - 삭제된 파일은 복구할 수 없습니다 (백업 옵션 사용 시 제외).")
     print()
     
     # 확인
@@ -146,7 +183,7 @@ def main():
         else:
             target = "모든 인물"
         
-        response = input(f"정말 {target}의 임베딩을 초기화하시겠습니까? (yes/no): ")
+        response = input(f"정말 {target}의 Dynamic/Masked Bank를 삭제하시겠습니까? (yes/no): ")
         if response.lower() != "yes":
             print("❌ 취소되었습니다.")
             return
@@ -163,32 +200,29 @@ def main():
     # 실행
     if args.person_id:
         print(f"📂 처리 대상: {args.person_id}\n")
-        success = reset_person_embeddings(args.person_id, backup=backup)
+        success = cleanup_person_banks(args.person_id, backup=backup)
         if success:
-            print(f"\n✅ 완료: {args.person_id} 초기화 완료")
+            print(f"\n✅ 완료: {args.person_id} 정리 완료")
         else:
-            print(f"\n⚠️  완료: {args.person_id} 초기화 실패 또는 파일 없음")
+            print(f"\n⚠️  완료: {args.person_id} 정리 실패 또는 파일 없음")
     else:
         print(f"📂 처리 대상: 모든 인물\n")
-        success_count = reset_all_embeddings(backup=backup)
+        success_count = cleanup_all_banks(backup=backup)
         print(f"\n✅ 완료: {success_count}명 처리 완료")
     
     print("\n" + "=" * 70)
     print("📝 다음 단계:")
-    print("   1. 웹 인터페이스에서 '용의자 추가' 버튼 클릭")
-    print("   2. 정면 사진 업로드하여 새로 등록")
-    print("   3. 또는 face_enroll.py 스크립트 사용")
+    print("   1. 서버를 재시작하여 변경사항 반영")
+    print("   2. 웹 인터페이스에서 영상 업로드 및 감지 테스트")
+    print("   3. 콘솔 로그에서 다음 메시지 확인:")
+    print("      ✅ [DYNAMIC BANK] 검증 통과: ...")
+    print("      ⏭ [DYNAMIC BANK] 검증 실패: ...")
+    print("   4. 새로운 검증 로직이 제대로 작동하는지 확인")
     print("=" * 70)
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
 
 
 
