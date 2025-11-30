@@ -1061,12 +1061,10 @@ def update_gallery_cache_in_memory(person_id: str, embedding: np.ndarray, bank_t
 
 def apply_temporal_filter(websocket: WebSocket, result: Dict) -> Dict:
     """
-    개선된 Temporal Filter: Hysteresis 임계값 + 윈도우 기반 투표
+    연속 프레임 기반 매칭 확정 로직 적용
     
-    기존 문제: 연속 3프레임 매칭 요구 → 임계값 근처에서 깜빡임
-    개선 방안:
-    1. Hysteresis 임계값: 시작(0%) vs 유지(-3%) → 안정성 향상
-    2. 윈도우 기반 투표: 최근 5프레임 중 3프레임 매칭 → 일시적 실패 무시
+    최소 3프레임 이상 연속으로 동일 인물 매칭이 나왔을 때만 "확정 match"로 처리합니다.
+    그 이전까지는 "candidate match(후보)" 상태로 두고, status를 "unknown"으로 유지합니다.
     
     Args:
         websocket: WebSocket 연결 객체
@@ -1075,30 +1073,28 @@ def apply_temporal_filter(websocket: WebSocket, result: Dict) -> Dict:
     Returns:
         temporal filter가 적용된 result
     """
-    # 설정
-    WINDOW_SIZE = 5              # 최근 N프레임 추적
-    MIN_MATCHES = 1              # 필요한 최소 매칭 수 (2 → 1: 최대 안정성)
-    MATCH_KEEP_OFFSET = -0.05    # 유지 임계값 완화 (-5%) - 왼쪽 얼굴 인식 개선
+    MIN_STABLE_FRAMES = 3  # 최소 연속 프레임 수
     
     if websocket not in connection_states:
+        # 연결 상태가 없으면 그대로 반환
         return result
     
     state = connection_states[websocket]
-    match_history = state.get("match_history", {})  # {person_id: [(confidence, matched), ...]}
+    match_counters = state.get("match_counters", {})
     
-    # 현재 프레임의 detection을 person_id별로 매핑
-    current_detections = {}
+    # 현재 프레임의 모든 person_id 수집
+    current_person_ids = set()
     for det in result.get("detections", []):
         person_id = det.get("person_id")
         if person_id:
-            current_detections[person_id] = det
+            current_person_ids.add(person_id)
     
-    # 사라진 person_id의 히스토리 정리
-    for person_id in list(match_history.keys()):
-        if person_id not in current_detections:
-            del match_history[person_id]
+    # 이전 프레임에서 매칭되었지만 현재 프레임에서 사라진 person_id는 카운터 초기화
+    for person_id in list(match_counters.keys()):
+        if person_id not in current_person_ids:
+            del match_counters[person_id]
     
-    # 각 detection에 temporal filter 적용
+    # 각 detection에 대해 temporal filter 적용
     filtered_detections = []
     alert_triggered = False
     detected_metadata = result.get("metadata", {"name": "미상", "confidence": 0, "status": "unknown"})
@@ -1106,58 +1102,25 @@ def apply_temporal_filter(websocket: WebSocket, result: Dict) -> Dict:
     for det in result.get("detections", []):
         person_id = det.get("person_id")
         status = det.get("status", "unknown")
-        confidence = det.get("confidence", 0) / 100.0  # 0-1 범위로 변환
         
         # criminal 또는 normal 상태이고 person_id가 있는 경우만 temporal filter 적용
         if status in ["criminal", "normal"] and person_id:
-            # 이력 가져오기
-            history = match_history.get(person_id, [])
+            # 카운터 증가
+            if person_id not in match_counters:
+                match_counters[person_id] = 0
+            match_counters[person_id] += 1
             
-            # 현재 안정 상태 확인 (최근 MIN_MATCHES 프레임이 모두 매칭)
-            is_currently_stable = False
-            if len(history) >= MIN_MATCHES:
-                recent_matches = [matched for _, matched in history[-MIN_MATCHES:]]
-                is_currently_stable = all(recent_matches)
-            
-            # Hysteresis: 안정 상태면 낮은 임계값 사용
-            base_threshold = 0.48  # 기본값
-            if is_currently_stable:
-                effective_threshold = base_threshold + MATCH_KEEP_OFFSET  # 0.45
-            else:
-                effective_threshold = base_threshold  # 0.48
-            
-            # 현재 프레임 매칭 여부 판단
-            is_matched = confidence >= effective_threshold
-            
-            # 이력에 추가
-            history.append((confidence, is_matched))
-            
-            # 윈도우 크기 유지
-            if len(history) > WINDOW_SIZE:
-                history = history[-WINDOW_SIZE:]
-            
-            match_history[person_id] = history
-            
-            # 투표: 최근 N프레임 중 M프레임 이상 매칭?
-            matched_count = sum(matched for _, matched in history)
-            is_stable = matched_count >= MIN_MATCHES
-            
-            # 디버그 로그
-            history_str = "".join(["O" if m else "X" for _, m in history])
-            
-            if not is_stable:
-                # 아직 불안정 → Unknown
+            # 최소 프레임 수에 도달하지 않았으면 unknown으로 변경
+            if match_counters[person_id] < MIN_STABLE_FRAMES:
+                # 후보 상태로 표시 (unknown)
                 filtered_det = det.copy()
                 filtered_det["status"] = "unknown"
                 filtered_det["color"] = "yellow"
                 filtered_det["name"] = "Unknown"
                 filtered_detections.append(filtered_det)
-                print(f"   🔄 [TEMPORAL] {person_id[-6:]}: [{history_str}] {matched_count}/{len(history)} → Unknown (th={effective_threshold:.2f})")
             else:
-                # 안정 → 원래 상태 유지
+                # 확정 매칭 - 원래 상태 유지
                 filtered_detections.append(det)
-                print(f"   ✅ [TEMPORAL] {person_id[-6:]}: [{history_str}] {matched_count}/{len(history)} → Stable (th={effective_threshold:.2f})")
-                
                 if status == "criminal":
                     alert_triggered = True
                     detected_metadata = {
@@ -1175,8 +1138,8 @@ def apply_temporal_filter(websocket: WebSocket, result: Dict) -> Dict:
             # unknown 상태는 그대로 유지
             filtered_detections.append(det)
     
-    # match_history 업데이트
-    state["match_history"] = match_history
+    # match_counters 업데이트
+    state["match_counters"] = match_counters
     
     return {
         "detections": filtered_detections,
@@ -1323,65 +1286,37 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         
         # 1. 가중치 상수 정의
         W_BASE = 1.0      # Base Bank: 가장 신뢰 (원본 등록 사진)
-        W_DYNAMIC = 0.9   # Dynamic Bank: 높은 신뢰 (0.8 → 0.9: 수집된 옆모습 우선)
-        W_MASKED = 0.7    # Masked Bank: 중간 신뢰 (0.6 → 0.7: 마스크/모자 인식 개선)
+        W_DYNAMIC = 0.8   # Dynamic Bank: 중간 신뢰 (CCTV에서 수집)
+        W_MASKED = 0.6    # Masked Bank: 낮은 신뢰 (마스크 착용 상태)
         
-        # [근본 해결] 랜드마크 기반 실제 Occlusion 감지
-        # 유사도가 아닌 실제 얼굴 구조로 마스크 착용 여부 확인
-        # 
-        # 주의: check_face_occlusion 반환값
-        #   True = occlusion 없음 (얼굴 전체 보임, 마스크 없음)
-        #   False = occlusion 있음 (얼굴 가려짐, 마스크 있음)
-        is_face_clear = check_face_occlusion(face, box)
-        is_masked = not is_face_clear  # 가려지지 않으면 마스크 없음
-        
-        # mask_prob는 이제 실제 occlusion 결과에 기반
-        if is_masked:
-            # 얼굴이 가려져 있음 (마스크 착용)
-            mask_prob = 0.9
-            print(f"   🎭 [MASKED] 감지됨 (랜드마크 기반, is_face_clear={is_face_clear})")
-        else:
-            # 얼굴 전체가 보임 (마스크 없음)
-            mask_prob = 0.0
-        
-        # 2. Base Bank 기준 보정 로직 - 단계별 보정 강화
+        # 2. Base Bank 기준 보정 로직
         # Base 유사도가 너무 낮으면 다른 Bank의 높은 점수도 신뢰하지 않음
-        # [근본 해결] 단계별 페널티로 Masked/Dynamic Bank 오염 방지
+        BASE_THRESHOLD_FOR_CORRECTION = 0.4  # Base가 이 값 미만이면 보정 적용
         
-        if base_sim < 0.3:
-            # [근본 해결] 실제 occlusion 확인 + Masked Bank 유사도 높으면 예외
-            # 이전 문제: 유사도만으로 마스크 추정 → 오인식
-            # 현재 해결: 실제 랜드마크로 마스크 확인 → 정확
-            if is_masked and masked_sim >= 0.50:  # [완화] 0.92 → 0.50: 마스크 인식 개선
-                # 실제로 마스크 쓴 것 확인됨 + Masked Bank 중간 이상 → 페널티 면제
-                penalty_factor = 1.0
-                print(f"   ✅ [MASKED 예외] 실제 마스크 확인, masked_sim={masked_sim:.3f} → penalty 면제")
-            else:
-                # 마스크 안 쓰고 Base 낮음 = 다른 사람 → 보정 (완화)
-                penalty_factor = 0.7  # 40% → 70%: 페널티 완화
-                if not is_masked:
-                    print(f"   ⚠️ [BASE 보정] 마스크 없음, base_sim={base_sim:.3f} < 0.3 → penalty=70%")
-                else:
-                    print(f"   ⚠️ [BASE 보정] masked_sim={masked_sim:.3f} < 0.50 → penalty=70%")
-        elif base_sim < 0.5:
-            # Base가 낮으면 (50% 미만) 보정 적용 (완화)
-            penalty_factor = 0.7  # 50% → 70%: 페널티 완화
-            print(f"   ⚠️ [BASE 보정] base_sim={base_sim:.3f} < 0.5 → penalty=70%")
+        if base_sim < BASE_THRESHOLD_FOR_CORRECTION:
+            # Base와 너무 다르면 다른 Bank 점수를 크게 깎음
+            # (오염된 Dynamic Bank나 잘못된 Masked Bank 때문에 오인식되는 것 방지)
+            confident_base = base_sim * W_BASE
+            confident_dynamic = dynamic_sim * 0.7  # 70%로 깎음
+            confident_masked = masked_sim * 0.6    # 60%로 깎음
+            
+            # 가장 높은 점수 선택
+            scores = [
+                (confident_base, best_base_person_id, second_base_sim, "base"),
+                (confident_dynamic, best_dynamic_person_id, second_dynamic_sim, "dynamic"),
+                (confident_masked, best_mask_person_id, second_mask_sim, "masked")
+            ]
         else:
-            # Base가 충분하면 정상 가중치 적용
-            penalty_factor = 1.0
-        
-        # 페널티 적용
-        confident_base = base_sim * W_BASE
-        confident_dynamic = dynamic_sim * W_DYNAMIC * penalty_factor
-        confident_masked = masked_sim * W_MASKED * penalty_factor
-        
-        # 가장 높은 점수 선택
-        scores = [
-            (confident_base, best_base_person_id, second_base_sim, "base"),
-            (confident_dynamic, best_dynamic_person_id, second_dynamic_sim, "dynamic"),
-            (confident_masked, best_mask_person_id, second_mask_sim, "masked")
-        ]
+            # Base와 어느 정도 닮았다면 가중치를 정상 적용
+            weighted_base = base_sim * W_BASE
+            weighted_dynamic = dynamic_sim * W_DYNAMIC
+            weighted_masked = masked_sim * W_MASKED
+            
+            scores = [
+                (weighted_base, best_base_person_id, second_base_sim, "base"),
+                (weighted_dynamic, best_dynamic_person_id, second_dynamic_sim, "dynamic"),
+                (weighted_masked, best_mask_person_id, second_mask_sim, "masked")
+            ]
         
         # 3. 최고 점수 선택
         scores.sort(key=lambda x: x[0], reverse=True)
@@ -1463,25 +1398,26 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         # - 특정 화질에서만 문제가 있으면 해당 화질만 조정
         # - 자세한 튜닝 가이드: python scripts/tune_threshold_gap.py --guide
         if face_quality == "high":
-            main_threshold = 0.38  # [최종 조정] 0.42 → 0.38 (-4%): 인식률 극대화
-            gap_margin = 0.10      # [흐릿한 영상] 0.14 → 0.10 (-4%): 저화질 영상 대응
+            main_threshold = 0.42  # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
+            gap_margin = 0.12      # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
         elif face_quality == "medium":
-            main_threshold = 0.36  # [최종 조정] 0.40 → 0.36 (-4%): 인식률 극대화
-            gap_margin = 0.08      # [흐릿한 영상] 0.12 → 0.08 (-4%): 저화질 영상 대응
+            main_threshold = 0.40  # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
+            gap_margin = 0.10      # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
         else:  # low
-            main_threshold = 0.34  # [최종 조정] 0.38 → 0.34 (-4%): 인식률 극대화
-            gap_margin = 0.06      # [흐릿한 영상] 0.10 → 0.06 (-4%): 저화질 영상 대응
+            main_threshold = 0.38  # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
+            gap_margin = 0.08      # 튜닝 가능: False Positive 많으면 +0.01~+0.02, True Positive 적으면 -0.01~-0.02
         
-        # suspect_ids 모드에서 gap만 강화 (threshold는 유지)
-        # [최종 조정] threshold 상향 제거: 특정 인물 검색 시에도 인식률 우선
+        # suspect_ids 모드에서 threshold 강화 (더 보수적으로 판단)
         if suspect_ids:
-            main_threshold += 0.00  # threshold 상향 제거 (인식률 우선)
-            gap_margin += 0.02      # Gap만 약간 상향 (오인식 방지)
+            main_threshold += 0.02  # threshold 상향
+            gap_margin += 0.03  # gap 기준 더 엄격하게
         
         # 두 번째 유사도와의 차이 계산 (오인식 방지)
         sim_gap = max_similarity - second_similarity if second_similarity > 0 else max_similarity
         
-        # [mask_prob는 이미 위에서 계산됨 - 중복 제거]
+        # 마스크 가능성 추정 (base_sim 기반으로 판단)
+        # base_sim이 낮으면 마스크 가능성이 높음
+        mask_prob = estimate_mask_from_similarity(base_sim)
         
         # Masked candidate frame 판단
         # 조건: base_sim < threshold AND base_sim >= 0.25 AND mask_prob >= 0.5
@@ -1527,43 +1463,28 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         BANK_DUPLICATE_THRESHOLD = 0.8
         bank_added = False
         
-        # 강화된 매칭 조건: 두 가지 조건을 모두 만족해야 match 인정
+        # 강화된 매칭 조건: 세 가지 조건을 모두 만족해야 match 인정
         # 1) 절대 유사도 기준: main_threshold 이상
         # 2) gap 기준: sim_gap >= gap_margin
-        # [제거됨] 3) 두 번째 후보 상한 체크 - Gap margin만으로 충분함
+        # 3) 두 번째 후보 상한: second_similarity < main_threshold - 0.02
+        #    (두 번째 후보도 꽤 높으면 애매하니 unknown 처리)
         is_match = False
         if max_similarity >= main_threshold:
-            # Gap이 충분히 벌어졌을 때만 match 인정
-            if sim_gap >= gap_margin:
-                is_match = True
-        
-        # [근본 해결] 최소 Base 유사도 요구사항
-        # Base Bank와 10% 미만이면 무조건 차단 (Masked/Dynamic Bank 오염 방지)
-        # 단, Masked Bank 사용 + mask_prob 높으면 예외 (정상 마스크 착용자)
-        # [완화] 0.30 → 0.15 → 0.10: 마스크/모자 착용 범죄자 인식 극대화
-        MIN_BASE_SIMILARITY_REQUIRED = 0.10
-        
-        if is_match and base_sim < MIN_BASE_SIMILARITY_REQUIRED:
-            # [개선] 마스크 착용자 예외 - mask_prob만으로도 판단 (더 관대하게)
-            # 실제 마스크 확인 또는 mask_prob이 높으면 예외 처리
-            if (bank_type == "masked" and is_masked) or mask_prob >= 0.70:
-                print(f"   ✅ [BASE 예외] 마스크 착용자 확인 (mask_prob={mask_prob:.3f}), Base 요구사항 면제")
-            else:
+            # 두 번째 후보가 너무 비슷하면 match 포기
+            if second_similarity > 0 and second_similarity >= (main_threshold - 0.02):
                 is_match = False
-                # 마스크 착용 여부에 따라 다른 메시지 출력
-                if not is_masked:
-                    print(f"   ⚠️ [BASE 요구사항] 차단: {best_person_id} (base={base_sim:.3f} < {MIN_BASE_SIMILARITY_REQUIRED:.3f}, 마스크 없음)")
-                else:
-                    print(f"   ⚠️ [BASE 요구사항] 차단: {best_person_id} (base={base_sim:.3f} < {MIN_BASE_SIMILARITY_REQUIRED:.3f}, 마스크 착용했으나 mask_prob 낮음)")
+            else:
+                # gap이 충분히 벌어졌을 때만 match 인정
+                if sim_gap >= gap_margin:
+                    is_match = True
         
         # suspect_ids가 지정된 경우: 추가 강화 규칙 적용
         if suspect_ids:
             # best_match가 이미 선택된 용의자 중 하나임을 보장
             if not best_match:
                 is_match = False
-            # 절대값 0.48 미만이면 match 포기 (suspect_ids 모드에서 더 보수적으로)
-            # [시나리오 2] 기존 0.45 → 0.48 (+0.03): 최소 기준선 상향
-            elif max_similarity < 0.48:
+            # 절대값 0.45 미만이면 match 포기 (suspect_ids 모드에서 더 보수적으로)
+            elif max_similarity < 0.45:
                 is_match = False
         else:
             # 전체 갤러리 모드에서도 best_match가 없으면 match 불가
@@ -1799,16 +1720,15 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             # =========================================================
             
             # 1. 학습용 임계값은 감지용보다 훨씬 높아야 함 (보수적 접근)
-            # 예: 감지는 40%면 알람을 울리지만, 학습은 48% 이상일 때만 함
-            # [조정] 0.75 → 0.48: 옆모습 각도 임베딩 수집 극대화 (최종 조정 3차)
-            LEARNING_THRESHOLD = 0.48  # 75% → 65% → 60% → 55% → 53% → 51% → 48%
+            # 예: 감지는 40%면 알람을 울리지만, 학습은 85% 이상일 때만 함
+            LEARNING_THRESHOLD = 0.75 
 
             # 2. [핵심] 원본(Base)과의 유사도 검증 (Golden Standard Check)
             # 현재 모습이 'Dynamic Bank(최근 모습)'와 비슷하더라도, 
             # 'Base Bank(원본 등록 사진)'와 너무 다르면 학습하지 않음.
             # -> 이게 없으면 점점 엉뚱한 얼굴로 변해가는 것을 막을 수 없음.
-            # [조정] 0.55 → 0.33: 옆모습 각도 수집 극대화 (최종 조정 3차)
-            MIN_BASE_SIMILARITY = 0.33  # 55% → 50% → 45% → 40% → 38% → 36% → 33% 
+            # v2 개선: 0.45 → 0.55로 상향 (사용자 승인)
+            MIN_BASE_SIMILARITY = 0.55 
 
             should_add_to_dynamic_bank = False
             validation_failures = []
@@ -1823,25 +1743,25 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                     validation_failures.append(f"base_sim({base_sim_result:.2f}) < min_base({MIN_BASE_SIMILARITY}) - 원본과 너무 다름")
                 
                 # 조건 3: Occlusion 체크 (v2 신규 - 랜드마크 기반)
-                # [제거됨] 다양한 각도 수집을 위해 Occlusion 체크 비활성화
-                # - 문제: 정상적인 옆모습/윗모습도 차단 (90% profile, 60% side 차단)
-                # - 대안: LEARNING_THRESHOLD (0.48), MIN_BASE_SIMILARITY (0.33), 중복 체크 (0.95)로 오염 방지
                 # face 객체가 필요하므로 face_index로 찾아옴
-                
-                # 조건 3 (신규): 얼굴 품질 체크 (기존 조건 4를 조건 3으로 승격)
                 else:
                     face_index = result.get("face_index")
                     if face_index is not None and face_index < len(face_objects):
-                        # Occlusion 체크 생략 - 각도 다양성 우선
-                        # 얼굴 크기만 체크
-                        face_width = box[2] - box[0]
-                        face_height = box[3] - box[1]
-                        face_size = max(face_width, face_height)
-                        
-                        if face_size < 100:  # 너무 작은 얼굴은 학습 X
-                            validation_failures.append("face too small")
+                        face_obj = face_objects[face_index]
+                        # Occlusion 체크: True면 가림 없음(정상), False면 가림 있음(차단)
+                        is_clear = check_face_occlusion(face_obj, bbox=tuple(map(int, box)))
+                        if not is_clear:
+                            validation_failures.append("occlusion detected (mask/hand/etc)")
                         else:
-                            should_add_to_dynamic_bank = True
+                            # 조건 4: 얼굴 품질 (기존 유지 - 최소 크기만 체크)
+                            face_width = box[2] - box[0]
+                            face_height = box[3] - box[1]
+                            face_size = max(face_width, face_height)
+                            
+                            if face_size < 100:  # 너무 작은 얼굴은 학습 X
+                                validation_failures.append("face too small")
+                            else:
+                                should_add_to_dynamic_bank = True
                     else:
                         validation_failures.append("face object not found")
                 
@@ -2104,8 +2024,7 @@ async def websocket_detect(websocket: WebSocket):
         connection_states[websocket] = {
             "suspect_ids": [],  # 여러 명 선택 가능
             "connected_at": asyncio.get_event_loop().time(),
-            "match_counters": {},  # person_id별 연속 매칭 프레임 카운터 (하위 호환용 유지)
-            "match_history": {},   # person_id별 최근 프레임 이력: {person_id: [(confidence, matched), ...]}
+            "match_counters": {},  # person_id별 연속 매칭 프레임 카운터 (temporal consistency용)
             "tracking_state": {
                 "tracks": {}  # bbox tracking 상태
             }

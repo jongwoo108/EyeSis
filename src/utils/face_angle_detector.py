@@ -114,28 +114,33 @@ def is_diverse_angle(collected_angles: list[str], new_angle: str) -> bool:
     if not collected_angles:
         return True
     
-    # 프로필은 항상 추가 (드물기 때문)
-    if new_angle in ["left_profile", "right_profile"]:
-        return True
+    # 프로필은 각각 최대 50개까지 (10 → 50) - 인식률 향상 위해 제한 완화
+    if new_angle == "left_profile":
+        left_profile_count = collected_angles.count("left_profile")
+        return left_profile_count < 50
     
-    # 정면은 최대 2개까지만
+    if new_angle == "right_profile":
+        right_profile_count = collected_angles.count("right_profile")
+        return right_profile_count < 50
+    
+    # 정면은 최대 50개까지 (5 → 50) - 중복 체크(0.95)가 실제 제한 역할
     if new_angle == "front":
         front_count = collected_angles.count("front")
-        return front_count < 2
+        return front_count < 50
     
-    # 측면(left, right)은 각각 최대 3개까지
+    # 측면(left, right)은 각각 최대 50개까지 (10 → 50)
     if new_angle == "left":
         left_count = collected_angles.count("left")
-        return left_count < 3
+        return left_count < 50
     
     if new_angle == "right":
         right_count = collected_angles.count("right")
-        return right_count < 3
+        return right_count < 50
     
-    # Top은 최대 2개까지만
+    # Top은 최대 50개까지 (10 → 50)
     if new_angle == "top":
         top_count = collected_angles.count("top")
-        return top_count < 2
+        return top_count < 50
     
     return True
 

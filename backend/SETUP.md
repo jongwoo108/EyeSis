@@ -126,3 +126,6 @@ PostgreSQL 연결 실패 시 자동으로 `outputs/embeddings`를 사용합니�
 
 
 
+
+
+

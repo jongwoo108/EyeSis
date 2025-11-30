@@ -140,6 +140,238 @@ def cleanup_all_banks(backup: bool = True) -> int:
     return success_count
 
 
+def cleanup_contaminated_embeddings(person_id: str, min_base_sim: float = 0.5, backup: bool = True) -> dict:
+    """
+    오염된 임베딩만 선별 삭제 (Base Bank와 유사도가 낮은 것만)
+    
+    Args:
+        person_id: 인물 ID
+        min_base_sim: Base Bank와의 최소 유사도 (이 값 미만이면 오염으로 간주)
+        backup: 기존 파일 백업 여부
+    
+    Returns:
+        {"removed": int, "kept": int, "total": int} 통계
+    """
+    import numpy as np
+    import json
+    
+    person_dir = EMBEDDINGS_DIR / person_id
+    
+    if not person_dir.exists():
+        print(f"  ⚠️ 인물 폴더 없음: {person_dir}")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    base_bank_path = person_dir / "bank_base.npy"
+    dynamic_bank_path = person_dir / "bank_dynamic.npy"
+    angles_path = person_dir / "angles_dynamic.json"
+    
+    # Base Bank 로드
+    if not base_bank_path.exists():
+        print(f"  ⚠️ Base Bank 없음: {base_bank_path}")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    base_bank = np.load(base_bank_path)
+    if base_bank.ndim == 1:
+        base_bank = base_bank.reshape(1, -1)
+    
+    # Dynamic Bank 로드
+    if not dynamic_bank_path.exists():
+        print(f"  ℹ️ Dynamic Bank 없음 (정리할 것이 없음)")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    dynamic_bank = np.load(dynamic_bank_path)
+    if dynamic_bank.ndim == 1:
+        dynamic_bank = dynamic_bank.reshape(1, -1)
+    
+    # 각도 정보 로드
+    angles_info = {}
+    if angles_path.exists():
+        with open(angles_path, 'r', encoding='utf-8') as f:
+            angles_info = json.load(f)
+    
+    # 백업
+    if backup:
+        backup_dir = person_dir / "backup_before_cleanup"
+        backup_dir.mkdir(exist_ok=True)
+        shutil.copy2(dynamic_bank_path, backup_dir / "bank_dynamic.npy")
+        if angles_path.exists():
+            shutil.copy2(angles_path, backup_dir / "angles_dynamic.json")
+    
+    # Base Bank 정규화
+    base_bank_normalized = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
+    
+    # 각 Dynamic 임베딩을 Base Bank와 비교
+    keep_indices = []
+    remove_indices = []
+    
+    for i, emb in enumerate(dynamic_bank):
+        # 정규화
+        emb_normalized = emb / (np.linalg.norm(emb) + 1e-6)
+        
+        # Base Bank와의 최대 유사도 계산
+        similarities = np.dot(base_bank_normalized, emb_normalized)
+        max_sim = float(np.max(similarities))
+        
+        if max_sim >= min_base_sim:
+            keep_indices.append(i)
+        else:
+            remove_indices.append(i)
+    
+    if not remove_indices:
+        print(f"  ✅ 오염된 임베딩 없음 (모두 Base와 유사도 {min_base_sim} 이상)")
+        return {"removed": 0, "kept": len(keep_indices), "total": dynamic_bank.shape[0]}
+    
+    # 유지할 임베딩만 저장
+    cleaned_dynamic_bank = dynamic_bank[keep_indices]
+    
+    # 각도 정보도 업데이트
+    if angles_info and "angle_types" in angles_info:
+        cleaned_angles = {
+            "angle_types": [angles_info["angle_types"][i] for i in keep_indices],
+            "yaw_angles": [angles_info["yaw_angles"][i] for i in keep_indices] if "yaw_angles" in angles_info else []
+        }
+    else:
+        cleaned_angles = {"angle_types": [], "yaw_angles": []}
+    
+    # 저장
+    np.save(dynamic_bank_path, cleaned_dynamic_bank)
+    with open(angles_path, 'w', encoding='utf-8') as f:
+        json.dump(cleaned_angles, f, indent=2, ensure_ascii=False)
+    
+    print(f"  🗑️ 오염된 임베딩 삭제: {len(remove_indices)}개")
+    print(f"  ✅ 유지된 임베딩: {len(keep_indices)}개")
+    
+    return {"removed": len(remove_indices), "kept": len(keep_indices), "total": dynamic_bank.shape[0]}
+
+
+def limit_embeddings_per_angle(person_id: str, max_per_angle: int = 5, backup: bool = True) -> dict:
+    """
+    각 각도별로 품질 좋은 상위 N개만 유지
+    
+    Args:
+        person_id: 인물 ID
+        max_per_angle: 각도당 최대 임베딩 개수
+        backup: 기존 파일 백업 여부
+    
+    Returns:
+        {"removed": int, "kept": int, "total": int} 통계
+    """
+    import numpy as np
+    import json
+    from collections import defaultdict
+    
+    person_dir = EMBEDDINGS_DIR / person_id
+    
+    if not person_dir.exists():
+        print(f"  ⚠️ 인물 폴더 없음: {person_dir}")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    base_bank_path = person_dir / "bank_base.npy"
+    dynamic_bank_path = person_dir / "bank_dynamic.npy"
+    angles_path = person_dir / "angles_dynamic.json"
+    
+    # Base Bank 로드
+    if not base_bank_path.exists():
+        print(f"  ⚠️ Base Bank 없음: {base_bank_path}")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    base_bank = np.load(base_bank_path)
+    if base_bank.ndim == 1:
+        base_bank = base_bank.reshape(1, -1)
+    
+    # Dynamic Bank 로드
+    if not dynamic_bank_path.exists():
+        print(f"  ℹ️ Dynamic Bank 없음 (정리할 것이 없음)")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    dynamic_bank = np.load(dynamic_bank_path)
+    if dynamic_bank.ndim == 1:
+        dynamic_bank = dynamic_bank.reshape(1, -1)
+    
+    # 각도 정보 로드
+    if not angles_path.exists():
+        print(f"  ⚠️ 각도 정보 없음: {angles_path}")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    with open(angles_path, 'r', encoding='utf-8') as f:
+        angles_info = json.load(f)
+    
+    angle_types = angles_info.get("angle_types", [])
+    
+    if not angle_types:
+        print(f"  ℹ️ 각도 정보 비어 있음")
+        return {"removed": 0, "kept": 0, "total": 0}
+    
+    # 백업
+    if backup:
+        backup_dir = person_dir / "backup_before_cleanup"
+        backup_dir.mkdir(exist_ok=True)
+        shutil.copy2(dynamic_bank_path, backup_dir / "bank_dynamic.npy")
+        shutil.copy2(angles_path, backup_dir / "angles_dynamic.json")
+    
+    # Base Bank 정규화
+    base_bank_normalized = base_bank / (np.linalg.norm(base_bank, axis=1, keepdims=True) + 1e-6)
+    
+    # 각도별로 그룹화
+    angle_groups = defaultdict(list)
+    for i, angle_type in enumerate(angle_types):
+        angle_groups[angle_type].append(i)
+    
+    # 각 각도별로 Base와 유사도 높은 상위 N개만 선택
+    keep_indices = []
+    
+    for angle_type, indices in angle_groups.items():
+        if len(indices) <= max_per_angle:
+            # 이미 개수 제한 이내
+            keep_indices.extend(indices)
+        else:
+            # Base와 유사도 계산
+            similarities = []
+            for idx in indices:
+                emb = dynamic_bank[idx]
+                emb_normalized = emb / (np.linalg.norm(emb) + 1e-6)
+                max_sim = float(np.max(np.dot(base_bank_normalized, emb_normalized)))
+                similarities.append((idx, max_sim))
+            
+            # 유사도 높은 순으로 정렬
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            
+            # 상위 N개만 선택
+            top_n = similarities[:max_per_angle]
+            keep_indices.extend([idx for idx, _ in top_n])
+            
+            print(f"  📊 [{angle_type}] {len(indices)}개 → {max_per_angle}개 (상위 {max_per_angle}개 유지)")
+    
+    # 인덱스 정렬 (순서 유지)
+    keep_indices.sort()
+    
+    original_count = dynamic_bank.shape[0]
+    
+    if len(keep_indices) == original_count:
+        print(f"  ✅ 모든 각도가 제한 이내 (변경 없음)")
+        return {"removed": 0, "kept": original_count, "total": original_count}
+    
+    # 유지할 임베딩만 저장
+    cleaned_dynamic_bank = dynamic_bank[keep_indices]
+    
+    # 각도 정보도 업데이트
+    cleaned_angles = {
+        "angle_types": [angle_types[i] for i in keep_indices],
+        "yaw_angles": [angles_info["yaw_angles"][i] for i in keep_indices] if "yaw_angles" in angles_info else []
+    }
+    
+    # 저장
+    np.save(dynamic_bank_path, cleaned_dynamic_bank)
+    with open(angles_path, 'w', encoding='utf-8') as f:
+        json.dump(cleaned_angles, f, indent=2, ensure_ascii=False)
+    
+    removed_count = original_count - len(keep_indices)
+    print(f"  🗑️ 제거된 임베딩: {removed_count}개")
+    print(f"  ✅ 유지된 임베딩: {len(keep_indices)}개")
+    
+    return {"removed": removed_count, "kept": len(keep_indices), "total": original_count}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Dynamic Bank와 Masked Bank만 삭제하는 스크립트 - Base Bank는 유지합니다."
@@ -158,6 +390,26 @@ def main():
         "--confirm",
         action="store_true",
         help="확인 없이 실행"
+    )
+    # v2 신규: --mode 옵션 추가
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["full", "clean", "limit", "all"],
+        default="full",
+        help="정리 모드: full(전체 삭제), clean(오염 선별 삭제), limit(각도별 제한), all(clean+limit 순차 실행)"
+    )
+    parser.add_argument(
+        "--min-base-sim",
+        type=float,
+        default=0.5,
+        help="clean 모드에서 Base Bank와의 최소 유사도 (기본: 0.5)"
+    )
+    parser.add_argument(
+        "--max-per-angle",
+        type=int,
+        default=5,
+        help="limit 모드에서 각도별 최대 임베딩 개수 (기본: 5)"
     )
     
     args = parser.parse_args()
@@ -223,6 +475,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 

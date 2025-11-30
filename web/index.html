@@ -114,8 +114,8 @@
                 <div class="lg:col-span-1 space-y-4">
                     <!-- 긴급 상황 전파 시스템 -->
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 border-red-200">
-                        <button id="dispatchReportBtn"
-                            class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2 tracking-tight relative overflow-hidden">
+                        <button id="dispatchReportBtn" disabled
+                            class="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2 tracking-tight relative overflow-hidden">
                             <span
                                 class="absolute inset-0 bg-red-400 opacity-0 hover:opacity-20 transition-opacity duration-300"></span>
                             <svg class="w-5 h-5 relative z-10 animate-pulse" fill="none" stroke="currentColor"
@@ -124,7 +124,7 @@
                                     d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
                                 </path>
                             </svg>
-                            <span class="relative z-10">🚨 발견 보고 전송</span>
+                            <span class="relative z-10">발견 보고 전송</span>
                         </button>
                     </div>
 
@@ -380,7 +380,9 @@
                         <label for="personCategoryCustom" class="block text-sm font-medium text-gray-700 mb-1">
                             카테고리 직접 입력 <span class="text-red-500">*</span>
                         </label>
-                        <input type="text" id="personCategoryCustom" placeholder="카테고리를 직접 입력하세요 (예: VIP, 스토커)">
+                        <input type="text" id="personCategoryCustom" 
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent tracking-tight"
+                            placeholder="카테고리를 직접 입력하세요 (예: VIP, 스토커)">
                         <!-- Hidden input for form submission -->
                         <input type="hidden" id="personTypeInput" name="personType" value="criminal">
                     </div>
@@ -416,6 +418,12 @@
                         </path>
                     </svg>
                 </button>
+            </div>
+            <!-- 인물별 필터 탭 -->
+            <div id="clipTabs" class="px-8 pt-4 border-b bg-gray-50">
+                <div class="flex flex-wrap gap-2 overflow-x-auto pb-2">
+                    <!-- 탭이 동적으로 추가됩니다 -->
+                </div>
             </div>
             <div class="p-8 overflow-y-auto flex-1">
                 <div id="clipList" class="space-y-6">
@@ -504,75 +512,9 @@
                 </div>
             </div>
 
-            <!-- Section B & C: Grid 레이아웃 -->
-            <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Section B: 인물 및 감지 정보 (좌측) -->
-                <div class="space-y-4">
-                    <h3 class="text-lg font-semibold text-gray-800 tracking-tight border-b pb-2">인물 및 감지 정보</h3>
-
-                    <div class="bg-gray-50 rounded-lg p-4 space-y-3">
-                        <div>
-                            <label class="text-xs font-medium text-gray-500 tracking-tight">대상</label>
-                            <div class="mt-1">
-                                <p class="text-lg font-bold text-gray-800" id="dispatchPersonName">홍운하</p>
-                                <div class="flex items-center gap-2 mt-1">
-                                    <span
-                                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700"
-                                        id="dispatchPersonType">강력 범죄자</span>
-                                    <span
-                                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700"
-                                        id="dispatchRiskLevel">High</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="border-t pt-3 space-y-2">
-                            <div>
-                                <label class="text-xs font-medium text-gray-500 tracking-tight">장소</label>
-                                <p class="text-sm font-medium text-gray-800 mt-1" id="dispatchLocation">A편의점 (정문)</p>
-                            </div>
-                            <div>
-                                <label class="text-xs font-medium text-gray-500 tracking-tight">감지 시간</label>
-                                <p class="text-sm font-medium text-gray-800 mt-1" id="dispatchTime">12초 전</p>
-                            </div>
-                            <div>
-                                <label class="text-xs font-medium text-gray-500 tracking-tight">일치율</label>
-                                <p class="text-sm font-medium text-gray-800 mt-1" id="dispatchSimilarity">98.2%</p>
-                            </div>
-                            <div>
-                                <label class="text-xs font-medium text-gray-500 tracking-tight">현재 착장</label>
-                                <p class="text-sm font-medium text-gray-800 mt-1" id="dispatchClothing">검정 후드티, 청바지, 마스크
-                                    미착용</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Section C: 시각 증거 비교 (우측) -->
-                <div class="space-y-4">
-                    <h3 class="text-lg font-semibold text-gray-800 tracking-tight border-b pb-2">시각 증거 비교</h3>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="space-y-2">
-                            <label class="text-xs font-medium text-gray-500 tracking-tight block">DB 사진</label>
-                            <div
-                                class="bg-gray-100 rounded-lg p-4 flex items-center justify-center h-48 border-2 border-gray-200">
-                                <img id="dispatchDbImage" src="" alt="DB 사진"
-                                    class="max-w-full max-h-full object-contain rounded-lg hidden">
-                                <span class="text-gray-400 text-sm" id="dispatchDbPlaceholder">이미지 없음</span>
-                            </div>
-                        </div>
-                        <div class="space-y-2">
-                            <label class="text-xs font-medium text-gray-500 tracking-tight block">CCTV 스냅샷</label>
-                            <div
-                                class="bg-gray-100 rounded-lg p-4 flex items-center justify-center h-48 border-2 border-gray-200">
-                                <img id="dispatchSnapshotImage" src="" alt="CCTV 스냅샷"
-                                    class="max-w-full max-h-full object-contain rounded-lg hidden">
-                                <span class="text-gray-400 text-sm" id="dispatchSnapshotPlaceholder">이미지 없음</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <!-- Section B: 동적 인물 리스트 컨테이너 -->
+            <div id="dispatchReportList" class="p-6 space-y-8 divide-y divide-gray-200 max-h-[60vh] overflow-y-auto">
+                <!-- 자바스크립트로 인물별 카드 생성됨 -->
             </div>
 
             <!-- Section D: 액션 버튼 (하단) -->
@@ -581,13 +523,13 @@
                     class="bg-gray-200 hover:bg-gray-300 text-gray-700 py-3 px-6 rounded-lg font-medium transition-all duration-200 shadow-sm tracking-tight">
                     취소
                 </button>
-                <button id="sendDispatchBtn"
+                <button id="sendDispatchReportBtn"
                     class="bg-red-600 hover:bg-red-700 text-white py-3 px-6 rounded-lg font-bold transition-all duration-200 shadow-md hover:shadow-lg flex items-center gap-2 tracking-tight">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
                     </svg>
-                    👮 경찰서로 즉시 전송
+                    경찰서로 즉시 전송
                 </button>
             </div>
         </div>
