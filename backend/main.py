@@ -44,12 +44,9 @@ from backend.utils.websocket_manager import(
     register_connection,
     unregister_connection
 )
-from backend.services.data_loader import(
-    persons_cache,
-    gallery_base_cache,
-    gallery_base_cache,
-    gallery_masked_cache,
-    gallery_dynamic_cache,
+from backend.services import data_loader
+from backend.services.data_loader import (
+    load_persons_from_db,
     load_persons_from_embeddings,
     load_persons_from_legacy_files,
     find_person_info
@@ -159,7 +156,7 @@ async def startup_event():
         load_persons_from_embeddings()
     
     # 3. 데이터가 없으면 경고
-    if not gallery_base_cache and not persons_cache:
+    if not data_loader.gallery_base_cache and not data_loader.persons_cache:
         print("⚠️ 경고: 등록된 얼굴 데이터가 없습니다!")
         print("   face_enroll.py를 실행하여 인물을 등록하거나,")
         print("   python backend/init_db.py를 실행하여 데이터를 마이그레이션해주세요.\n")
@@ -398,12 +395,12 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             target_masked_gallery = {}
             target_dynamic_gallery = {}
             for sid in suspect_ids:
-                if sid in gallery_base_cache:
-                    target_base_gallery[sid] = gallery_base_cache[sid]
-                if sid in gallery_masked_cache:
-                    target_masked_gallery[sid] = gallery_masked_cache[sid]
-                if sid in gallery_dynamic_cache:
-                    target_dynamic_gallery[sid] = gallery_dynamic_cache[sid]
+                if sid in data_loader.gallery_base_cache:
+                    target_base_gallery[sid] = data_loader.gallery_base_cache[sid]
+                if sid in data_loader.gallery_masked_cache:
+                    target_masked_gallery[sid] = data_loader.gallery_masked_cache[sid]
+                if sid in data_loader.gallery_dynamic_cache:
+                    target_dynamic_gallery[sid] = data_loader.gallery_dynamic_cache[sid]
             
             # Base Bank 매칭
             if target_base_gallery:
@@ -416,6 +413,9 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             # Dynamic Bank 매칭 (인식용)
             if target_dynamic_gallery:
                 best_dynamic_person_id, dynamic_sim, second_dynamic_sim = match_with_bank_detailed(embedding, target_dynamic_gallery)
+            
+            # 디버깅: 갤러리 상태 확인
+            print(f"   📊 [GALLERY] base={len(target_base_gallery)}, masked={len(target_masked_gallery)}, dynamic={len(target_dynamic_gallery)}")
         
         # suspect_ids가 없거나 비어있는 경우: 매칭 시도하지 않음 (모든 얼굴을 unknown으로 처리)
         else:
@@ -469,13 +469,17 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
                 # 실제로 마스크 쓴 것 확인됨 + Masked Bank 중간 이상 → 페널티 면제
                 penalty_factor = 1.0
                 print(f"   ✅ [MASKED 예외] 실제 마스크 확인, masked_sim={masked_sim:.3f} → penalty 면제")
+            elif dynamic_sim >= 0.60:  # [신규] Dynamic Bank 예외: 이미 수집된 옆얼굴 활용
+                # Dynamic Bank와 높은 유사도 → 이미 학습된 각도 → 페널티 면제
+                penalty_factor = 1.0
+                print(f"   ✅ [DYNAMIC 예외] Dynamic Bank 높은 유사도, dynamic_sim={dynamic_sim:.3f} → penalty 면제")
             else:
                 # 마스크 안 쓰고 Base 낮음 = 다른 사람 → 보정 (완화)
                 penalty_factor = 0.7  # 40% → 70%: 페널티 완화
                 if not is_masked:
                     print(f"   ⚠️ [BASE 보정] 마스크 없음, base_sim={base_sim:.3f} < 0.3 → penalty=70%")
                 else:
-                    print(f"   ⚠️ [BASE 보정] masked_sim={masked_sim:.3f} < 0.50 → penalty=70%")
+                    print(f"   ⚠️ [BASE 보정] masked_sim={masked_sim:.3f} < 0.50, dynamic_sim={dynamic_sim:.3f} < 0.60 → penalty=70%")
         elif base_sim < 0.5:
             # Base가 낮으면 (50% 미만) 보정 적용 (완화)
             penalty_factor = 0.7  # 50% → 70%: 페널티 완화
@@ -750,6 +754,7 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             "max_similarity": max_similarity,
             "base_sim": base_sim,  # base bank 유사도
             "masked_sim": masked_sim,  # masked bank 유사도
+            "dynamic_sim": dynamic_sim,  # dynamic bank 유사도
             "second_similarity": second_similarity,
             "sim_gap": sim_gap,
             "main_threshold": main_threshold,
@@ -852,11 +857,12 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
         bank_type_result = result.get("bank_type", "base")
         base_sim_result = result.get("base_sim", 0.0)
         masked_sim_result = result.get("masked_sim", 0.0)
+        dynamic_sim_result = result.get("dynamic_sim", 0.0)
         mask_prob_result = result.get("mask_prob", 0.0)
         is_masked_candidate_result = result.get("is_masked_candidate", False)
         candidate_frames_count_result = result.get("candidate_frames_count", 0)
         
-        print(f"🎯 [매칭 디버깅] bank={bank_type_result}, base_sim={base_sim_result:.3f}, masked_sim={masked_sim_result:.3f}, best_sim={max_similarity:.3f}")
+        print(f"🎯 [매칭 디버깅] bank={bank_type_result}, base_sim={base_sim_result:.3f}, masked_sim={masked_sim_result:.3f}, dynamic_sim={dynamic_sim_result:.3f}, best_sim={max_similarity:.3f}")
         print(f"   - main_threshold={main_threshold:.3f}, sim_gap={sim_gap:.3f}, gap_margin={gap_margin:.3f}, 매칭={is_match}")
         print(f"   - mask_prob={mask_prob_result:.3f}, masked_candidate={is_masked_candidate_result}, candidate_frames={candidate_frames_count_result}")
         print(f"   - 유사도 >= main_threshold: {max_similarity:.3f} >= {main_threshold:.3f} = {max_similarity >= main_threshold}")
@@ -1464,9 +1470,9 @@ async def websocket_test(websocket: WebSocket):
 @app.get("/api/persons")
 async def get_persons(db: Session = Depends(get_db)):
     """등록된 모든 인물 목록 조회"""
-    global persons_cache, gallery_base_cache, gallery_masked_cache
+
     
-    print(f"🔍 [API /persons] 요청 받음 - persons_cache 길이: {len(persons_cache) if persons_cache else 0}")
+    print(f"🔍 [API /persons] 요청 받음 - data_loader.persons_cache 길이: {len(data_loader.persons_cache) if data_loader.persons_cache else 0}")
     
     # 이미지 경로 찾기 헬퍼 함수
     def find_person_image(person_id: str) -> Optional[str]:
@@ -1490,11 +1496,11 @@ async def get_persons(db: Session = Depends(get_db)):
     # ⭐ 버그 수정: 쪼시를 사용하지 않고 항상 DB에서 직접 조회
     # 이렇게 해야 삭제/수정된 인물 정보가 즉시 반영됨
     # 캐시에서 반환 (성능 향상)
-    # if persons_cache and len(persons_cache) > 0:
-    #     print(f"📋 [API] persons_cache에서 반환: {len(persons_cache)}명")
+    # if data_loader.persons_cache and len(data_loader.persons_cache) > 0:
+    #     print(f"📋 [API] data_loader.persons_cache에서 반환: {len(data_loader.persons_cache)}명")
     #     result = {
     #         "success": True,
-    #         "count": len(persons_cache),
+    #         "count": len(data_loader.persons_cache),
     #         "persons": [
     #             {
     #                 "id": p["id"],
@@ -1504,14 +1510,14 @@ async def get_persons(db: Session = Depends(get_db)):
     #                 "info": p.get("info", {}),
     #                 "image_url": find_person_image(p["id"])  # 이미지 URL 추가
     #             }
-    #             for p in persons_cache
+    #             for p in data_loader.persons_cache
     #         ]
     #     }
     #     print(f"✅ [API] 응답 전송: success={result['success']}, count={result['count']}")
     #     return result
     
     # 쪼시가 없으면 DB에서 직접 조회
-    print(f"⚠️ [API] persons_cache가 비어있음, DB에서 직접 조회 시도")
+    print(f"⚠️ [API] data_loader.persons_cache가 비어있음, DB에서 직접 조회 시도")
     try:
         persons = get_all_persons(db)
         print(f"📋 [API] DB에서 조회: {len(persons)}명")
@@ -1521,7 +1527,7 @@ async def get_persons(db: Session = Depends(get_db)):
             # 캐시 갱신을 위해 load_persons_from_db 호출
             try:
                 load_persons_from_db(db)
-                print(f"✅ [API] 캐시 갱신 완료: {len(persons_cache)}명")
+                print(f"✅ [API] 캐시 갱신 완료: {len(data_loader.persons_cache)}명")
             except Exception as cache_error:
                 print(f"⚠️ [API] 캐시 갱신 실패: {cache_error}")
                 import traceback
@@ -1586,7 +1592,6 @@ async def delete_person(person_id: str, db: Session = Depends(get_db)):
             "message": "Deleted successfully"
         }
     """
-    global persons_cache, gallery_base_cache, gallery_masked_cache
     
     try:
         print(f"🗑️ [DELETE] 인물 삭제 요청: person_id={person_id}")
@@ -1654,15 +1659,15 @@ async def delete_person(person_id: str, db: Session = Depends(get_db)):
         except Exception as cache_error:
             print(f"  ⚠️ 캐시 갱신 실패: {cache_error}")
             # 캐시 갱신 실패 시 수동으로 제거
-            global persons_cache
-            if persons_cache:
-                persons_cache = [p for p in persons_cache if p.get('id') != person_id]
+            persons_cache
+            if data_loader.persons_cache:
+                data_loader.persons_cache = [p for p in data_loader.persons_cache if p.get('id') != person_id]
         
         # 6. 갤러리 캐시에서도 제거
-        if person_id in gallery_base_cache:
-            del gallery_base_cache[person_id]
-        if person_id in gallery_masked_cache:
-            del gallery_masked_cache[person_id]
+        if person_id in data_loader.gallery_base_cache:
+            del data_loader.gallery_base_cache[person_id]
+        if person_id in data_loader.gallery_masked_cache:
+            del data_loader.gallery_masked_cache[person_id]
         
         print(f"  ✅ 인물 삭제 완료: {person_name} ({person_id})")
         print(f"  📁 삭제된 파일: {', '.join(deleted_files) if deleted_files else '없음'}")
@@ -1698,7 +1703,7 @@ async def update_person(person_id: str, db: Session = Depends(get_db),
             "person": {...}  # 수정된 인물 정보
         }
     """
-    global persons_cache
+    persons_cache
     
     try:
         print(f"✏️ [UPDATE] 인물 수정 요청: person_id={person_id}")
@@ -1832,7 +1837,7 @@ async def enroll_person(
             "embedding_count": int
         }
     """
-    global persons_cache, gallery_base_cache, gallery_masked_cache
+    persons_cache, data_loader.gallery_base_cache, data_loader.gallery_masked_cache
     
     try:
         # is_criminal 결정 (criminal, wanted=True, 나머지=False)

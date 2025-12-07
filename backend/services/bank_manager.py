@@ -10,11 +10,16 @@ from datetime import datetime
 
 from backend.utils.image_utils import l2_normalize
 from src.utils.face_angle_detector import is_diverse_angle, is_all_angles_collected
+from backend.services.data_loader import (
+    gallery_base_cache,
+    gallery_masked_cache,
+    gallery_dynamic_cache
+)
+
 
 #constants
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-EMBEDDING_DIR = PROJECT_ROOT / "outputs" / "embeddings"
-
+EMBEDDINGS_DIR = PROJECT_ROOT / "outputs" / "embeddings" 
 
 def save_angle_separated_banks(dynamic_bank: np.ndarray, angles_info: dict, person_dir: Path):
     """
