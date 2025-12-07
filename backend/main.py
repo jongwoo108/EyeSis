@@ -1561,9 +1561,9 @@ def process_detection(frame: np.ndarray, suspect_id: Optional[str] = None, suspe
             # best_match가 이미 선택된 용의자 중 하나임을 보장
             if not best_match:
                 is_match = False
-            # 절대값 0.48 미만이면 match 포기 (suspect_ids 모드에서 더 보수적으로)
-            # [시나리오 2] 기존 0.45 → 0.48 (+0.03): 최소 기준선 상향
-            elif max_similarity < 0.48:
+            # 절대값 기준은 위에서 설정한 main_threshold를 따름
+            # [수정] 하드코딩된 0.48 제거 -> main_threshold 사용
+            elif max_similarity < main_threshold:
                 is_match = False
         else:
             # 전체 갤러리 모드에서도 best_match가 없으면 match 불가

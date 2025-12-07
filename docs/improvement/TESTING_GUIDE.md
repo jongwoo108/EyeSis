@@ -322,3 +322,4 @@ ls outputs/embeddings/<인물명>/bank_dynamic.npy
 
 
 
+
