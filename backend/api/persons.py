@@ -38,7 +38,7 @@ def get_model():
     return _model
 
 # face_enroll 함수들 import
-from src.face_enroll import get_main_face_embedding, save_embeddings, l2_normalize
+from backend.services.face_enroll import get_main_face_embedding, save_embeddings, l2_normalize
 
 router = APIRouter()
 

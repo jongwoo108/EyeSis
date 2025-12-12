@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.database import init_db, SessionLocal, Person, create_person
-from src.utils.gallery_loader import load_gallery
+from backend.utils.gallery_loader import load_gallery
 
 
 def load_json_database():
