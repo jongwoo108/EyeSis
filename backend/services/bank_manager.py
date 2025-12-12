@@ -8,8 +8,8 @@ import numpy as np
 import json
 from datetime import datetime
 
-from backend.utils.image_utils import l2_normalize
-from src.utils.face_angle_detector import is_diverse_angle, is_all_angles_collected
+from backend.utils.image_utils import l2_normalize, is_diverse_angle, is_all_angles_collected
+
 from backend.services.data_loader import (
     gallery_base_cache,
     gallery_masked_cache,
@@ -427,3 +427,24 @@ def update_gallery_cache_in_memory(person_id: str, embedding: np.ndarray, bank_t
         gallery_base_cache[person_id] = updated_base_bank
     
     return True
+
+
+def match_with_bank_detailed(face_emb, gallery):
+    """Match face embedding with gallery"""
+    if not gallery:
+        return "unknown", 0.0, 0.0
+    face_emb = l2_normalize(face_emb.astype("float32"))
+    sims = []
+    for pid, edata in gallery.items():
+        if edata.ndim == 2:
+            s = float((edata @ face_emb).max())
+        else:
+            s = float(edata @ face_emb)
+        sims.append((pid, s))
+    sims.sort(key=lambda x: x[1], reverse=True)
+    if not sims:
+        return "unknown", 0.0, 0.0
+    elif len(sims) == 1:
+        return sims[0][0], sims[0][1], 0.0
+    else:
+        return sims[0][0], sims[0][1], sims[1][1]
