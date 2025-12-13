@@ -702,31 +702,45 @@ function initCaptureCanvas() {
     UI.video.addEventListener('loadedmetadata', updateCanvasSize);
     window.addEventListener('resize', updateCanvasSize);
 
-    // 비디오 재생 시 AI 감지 자동 활성화
+    // 비디오 재생 시 AI 감지 자동 활성화 (일시정지 후 재생도 포함)
     UI.video.addEventListener('play', () => {
-        // 비디오가 재생되면 AI 감지 자동 활성화
+        // 처리 상태 초기화 (일시정지 후 재개 시 필수)
+        state.isProcessing = false;
+
+        // 비디오 메타데이터가 로드되지 않았으면 기다림
+        if (UI.video.videoWidth === 0 || UI.video.videoHeight === 0) {
+            console.log("⏳ 비디오 메타데이터 로드 대기 중...");
+            const onLoadedMetadata = () => {
+                UI.video.removeEventListener('loadedmetadata', onLoadedMetadata);
+                startDetectionAfterPlay();
+            };
+            UI.video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+            return;
+        }
+
+        startDetectionAfterPlay();
+    });
+
+    // 감지 시작 로직을 별도 함수로 분리
+    function startDetectionAfterPlay() {
         if (!state.isDetectionActive && UI.detectionFilter) {
+            // 최초 재생: AI 감지 자동 활성화
             console.log("▶️ 비디오 재생 감지, AI 감지 자동 활성화");
             UI.detectionFilter.checked = true;
             state.isDetectionActive = true;
 
-            // 처리 상태 초기화
-            state.isProcessing = false;
-
             // WebSocket 연결 시도 (백그라운드에서 연결 시도)
             if (state.useWebSocket && !state.isWsConnected) {
                 connectWebSocket();
-                // WebSocket 연결 완료 및 설정 완료 후 자동으로 WebSocket으로 전환됨
-                // 하지만 연결 완료 전까지는 HTTP로 즉시 시작
             }
+        }
 
-            // WebSocket 연결 상태와 관계없이 HTTP로 즉시 시작 (WebSocket 준비되면 자동 전환)
-            // 이렇게 하면 화면 전환 직후에도 통신이 바로 시작됨
-            console.log("🚀 HTTP 모드로 감지 시작 (WebSocket 준비되면 자동 전환)");
-            // Max FPS 모드: 최초 1회 호출 후 재귀적으로 실행
+        // 일시정지 후 재생 또는 최초 재생 모두 감지 루프 시작
+        if (state.isDetectionActive) {
+            console.log("🚀 비디오 재생됨, 감지 루프 시작");
             processRealtimeDetection();
         }
-    });
+    }
 
     // 비디오 종료 시 감지 루프 자동 중지
     UI.video.addEventListener('ended', () => {
@@ -949,11 +963,17 @@ function renderTimelineWithMerging() {
 
         // 병합된 구간을 막대로 렌더링
         mergedEvents.forEach(event => {
-            const startPercent = (event.start / UI.video.duration) * 100;
-            const endPercent = (event.end / UI.video.duration) * 100;
+            let startPercent = (event.start / UI.video.duration) * 100;
+            let endPercent = (event.end / UI.video.duration) * 100;
+            
+            // 시작이 0보다 작으면 0으로 제한
+            if (startPercent < 0) startPercent = 0;
+            // 끝이 100보다 크면 100으로 제한 (영상 끝까지 표시)
+            if (endPercent > 100) endPercent = 100;
+            // 시작이 100보다 크면 스킵
+            if (startPercent >= 100) return;
+            
             const widthPercent = endPercent - startPercent;
-
-            if (startPercent < 0 || endPercent > 100) return;
 
             const marker = document.createElement('div');
             marker.className = `absolute h-full ${markerColor} cursor-pointer transition-all duration-200 hover:scale-y-110 hover:brightness-110 rounded-sm z-10`;
@@ -1111,6 +1131,14 @@ function getAngleDisplayText(angleType) {
 
 // 박스를 캔버스에 그리기
 function drawDetections(detections, videoWidth, videoHeight) {
+    // AI 감지가 비활성화되어 있으면 캔버스 클리어하고 리턴
+    if (!state.isDetectionActive) {
+        if (state.detectionCtx && state.detectionCanvas) {
+            state.detectionCtx.clearRect(0, 0, state.detectionCanvas.width, state.detectionCanvas.height);
+        }
+        return;
+    }
+
     if (!state.detectionCtx || !detections || detections.length === 0) {
         // 박스가 없으면 캔버스 클리어
         if (state.detectionCtx) {
@@ -2838,6 +2866,11 @@ function addDetectionLogItem(data, isAlert, videoTime, snapshotImage) {
     const personId = data.person_id || data.name || 'unknown';
     const confidence = data.confidence ? (typeof data.confidence === 'number' ? data.confidence.toFixed(1) : data.confidence) : '0.0';
 
+    // Unknown 상태는 로그에 기록하지 않음
+    if (status === 'unknown' || name === 'Unknown') {
+        return;
+    }
+
     // 비디오 타임스탬프가 없으면 스킵
     if (videoTime === undefined || videoTime === null || isNaN(videoTime)) {
         console.warn('⚠️ addDetectionLogItem: videoTime이 없습니다.');
@@ -2900,14 +2933,14 @@ function addDetectionLogItem(data, isAlert, videoTime, snapshotImage) {
         bgClass = "bg-gray-50";
     }
 
-    // 썸네일 이미지 처리
+    // 썸네일 이미지 처리 (사각형 썸네일)
     let thumbnailHTML = '';
     if (snapshotImage) {
-        thumbnailHTML = `<img src="${snapshotImage}" alt="${name}" class="w-10 h-10 rounded-full object-cover">`;
+        thumbnailHTML = `<img src="${snapshotImage}" alt="${name}" class="w-14 h-14 rounded-md object-cover border-2 ${status === 'criminal' || isAlert ? 'border-red-300' : status === 'missing' ? 'border-blue-300' : 'border-gray-300'} shadow-sm">`;
     } else {
-        // 기본 아이콘
-        thumbnailHTML = `<div class="w-10 h-10 rounded-full ${status === 'criminal' || isAlert ? 'bg-red-100' : status === 'missing' ? 'bg-blue-100' : 'bg-gray-100'} flex items-center justify-center">
-            <svg class="w-6 h-6 ${status === 'criminal' || isAlert ? 'text-red-600' : status === 'missing' ? 'text-blue-600' : 'text-gray-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        // 기본 아이콘 (사각형)
+        thumbnailHTML = `<div class="w-14 h-14 rounded-md ${status === 'criminal' || isAlert ? 'bg-red-100 border-2 border-red-300' : status === 'missing' ? 'bg-blue-100 border-2 border-blue-300' : 'bg-gray-100 border-2 border-gray-300'} flex items-center justify-center shadow-sm">
+            <svg class="w-7 h-7 ${status === 'criminal' || isAlert ? 'text-red-600' : status === 'missing' ? 'text-blue-600' : 'text-gray-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
             </svg>
         </div>`;
