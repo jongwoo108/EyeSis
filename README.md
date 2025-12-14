@@ -106,26 +106,7 @@ outputs/embeddings/{person_id}/
 ## 시스템 아키텍처
 
 ### 전체 구조
-
-```mermaid
-graph TB
-    subgraph FaceWatch["FaceWatch System"]
-        Frontend["Frontend<br/>(ES Modules)"]
-        Backend["Backend<br/>(FastAPI)"]
-        Database["Database<br/>(PostgreSQL)"]
-        InsightFace["InsightFace<br/>(buffalo_l)"]
-        
-        Frontend <-->|WebSocket/HTTP| Backend
-        Backend <-->|SQL| Database
-        Backend -->|Model| InsightFace
-    end
-    
-    style FaceWatch fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff
-    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Backend fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Database fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
-    style InsightFace fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-```
+<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/f72522c6-009a-41f1-a3e3-5313c9a342f0" />
 
 ### 프론트엔드 모듈 구조
 
