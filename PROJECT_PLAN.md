@@ -173,33 +173,7 @@ def calculate_threshold(quality, mask_prob):
 <img width="2917" height="396" alt="enroll_flow" src="https://github.com/user-attachments/assets/0e7da950-3f1d-42ba-b7bb-fb9bb4839f9f" />
 
 ### 5.2 실시간 감지 플로우
-
-```mermaid
-flowchart TD
-    Input["프레임 입력"]
-    Skip{"프레임 스킵?"}
-    Detect["얼굴 감지<br/>RetinaFace"]
-    Process["임베딩 추출<br/>Bank 매칭<br/>임계값 계산"]
-    Filter["오탐 방지 필터링<br/>L1-L4"]
-    Classify["결과 분류"]
-    Send["클라이언트 전송"]
-    
-    Input --> Skip
-    Skip -->|No| Detect
-    Skip -->|Yes| Send
-    Detect --> Process
-    Process --> Filter
-    Filter --> Classify
-    Classify --> Send
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Skip fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Process fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style Filter fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
-    style Classify fill:#818CF8,stroke:#6366F1,stroke-width:2px,color:#fff
-    style Send fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-```
+<img width="4149" height="547" alt="detection_flow" src="https://github.com/user-attachments/assets/00edded2-a313-482a-a7d8-80049a3bc112" />
 
 ---
 
