@@ -4,7 +4,6 @@
 
 <div align="center">
 
-![EyeSis Logo](https://img.shields.io/badge/🎯-EyeSis-4F46E5?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql&logoColor=white)
@@ -22,27 +21,27 @@
 
 EyeSis는 CCTV, 영상, 이미지에서 **특정 인물을 자동으로 식별하고 추적**하는 AI 기반 얼굴 인식 시스템입니다.
 
-> **🎯 이 프로젝트의 핵심 혁신**: **한 장의 정면 사진만으로도** CCTV 환경에서 다양한 각도, 조명, 마스크 착용 상황에서 안정적으로 인식할 수 있는 **Dynamic Bank 시스템**을 구현했습니다. InsightFace의 최고 성능 모델인 **buffalo_l**을 활용하여 초기 등록의 한계를 극복하고, 자동 학습을 통해 인식률을 지속적으로 향상시킵니다.
+> ** 이 프로젝트의 핵심 혁신**: **한 장의 정면 사진만으로도** CCTV 환경에서 다양한 각도, 조명, 마스크 착용 상황에서 안정적으로 인식할 수 있는 **Dynamic Bank 시스템**을 구현했습니다. InsightFace의 최고 성능 모델인 **buffalo_l**을 활용하여 초기 등록의 한계를 극복하고, 자동 학습을 통해 인식률을 지속적으로 향상시킵니다.
 
-### 🎯 핵심 가치: 한 장의 정면 사진으로 CCTV 인식
+###  핵심 가치: 한 장의 정면 사진으로 CCTV 인식
 
 **이 프로젝트의 가장 중요한 기술적 도전과 해결책:**
 
 | 핵심 기술 | 설명 |
 |----------|------|
-| 🦬 **Buffalo L 모델** | InsightFace의 최고 성능 모델(buffalo_l)을 적용하여 SOTA 얼굴 인식 성능 달성 (정확도 >95%) |
-| 🔄 **Dynamic Bank 시스템** | **한 장의 정면 사진만으로도** CCTV에서 다양한 각도, 조명, 마스크 착용 상황에서 인식 가능하도록 자동으로 다양한 얼굴 임베딩을 수집하고 관리하는 핵심 시스템 |
-| 📸 **초기 등록의 한계 극복** | 초기 등록 시 정면 사진 1장만 있어도, 영상 분석 중 감지된 얼굴의 임베딩을 자동으로 Dynamic Bank에 추가하여 인식률을 지속적으로 향상 |
-| 🎥 **CCTV 환경 최적화** | 실제 CCTV 환경에서 발생하는 다양한 각도, 조명 변화, 마스크 착용 등 어려운 조건에서도 안정적인 인식 성능 제공 |
+|  **Buffalo L 모델** | InsightFace의 최고 성능 모델(buffalo_l)을 적용하여 SOTA 얼굴 인식 성능 달성 (정확도 >95%) |
+|  **Dynamic Bank 시스템** | **한 장의 정면 사진만으로도** CCTV에서 다양한 각도, 조명, 마스크 착용 상황에서 인식 가능하도록 자동으로 다양한 얼굴 임베딩을 수집하고 관리하는 핵심 시스템 |
+|  **초기 등록의 한계 극복** | 초기 등록 시 정면 사진 1장만 있어도, 영상 분석 중 감지된 얼굴의 임베딩을 자동으로 Dynamic Bank에 추가하여 인식률을 지속적으로 향상 |
+|  **CCTV 환경 최적화** | 실제 CCTV 환경에서 발생하는 다양한 각도, 조명 변화, 마스크 착용 등 어려운 조건에서도 안정적인 인식 성능 제공 |
 
 ### 기술적 특징
 
 | 특징 | 설명 |
 |------|------|
-| ⚡ **실시간 처리** | WebSocket 기반 저지연 스트리밍 (50-150ms) |
-| 🛡️ **오탐 최소화** | 다층 필터링 시스템으로 오탐률 <5% |
-| 🔄 **자동 학습** | 감지된 얼굴 임베딩 자동 수집으로 인식률 지속 향상 |
-| 📊 **Multi-Bank 아키텍처** | Base Bank(정면), Dynamic Bank(자동 수집), Masked Bank(마스크)로 구성된 지능형 임베딩 관리 시스템 |
+|  **실시간 처리** | WebSocket 기반 저지연 스트리밍 (50-150ms) |
+|  **오탐 최소화** | 다층 필터링 시스템으로 오탐률 <5% |
+|  **자동 학습** | 감지된 얼굴 임베딩 자동 수집으로 인식률 지속 향상 |
+|  **Multi-Bank 아키텍처** | Base Bank(정면), Dynamic Bank(자동 수집), Masked Bank(마스크)로 구성된 지능형 임베딩 관리 시스템 |
 
 ---
 
@@ -137,72 +136,6 @@ Dynamic Bank 매칭 (자동 수집된 다양한 각도)
 임베딩을 Dynamic Bank에 자동 추가 (학습)
 ```
 
-### 3. 고급 오탐 방지 시스템
-
-```mermaid
-flowchart TD
-    Input["Input Detection"]
-    
-    L1["L1: sim_gap 체크<br/>1위-2위 유사도 차이 ≥5%"]
-    L2["L2: bbox 필터링<br/>동일 영역 다중 매칭 제거"]
-    L3["L3: 프레임 연속성<br/>최근 5프레임 내 동일 인물"]
-    L4["L4: 화질 적응형 임계값<br/>환경별 동적 조정"]
-    
-    Output["Final Match ✓"]
-    
-    Input --> L1
-    L1 -->|Pass| L2
-    L2 -->|Pass| L3
-    L3 -->|Pass| L4
-    L4 -->|Pass| Output
-    
-    L1 -->|Fail| Reject["Reject"]
-    L2 -->|Fail| Reject
-    L3 -->|Fail| Reject
-    L4 -->|Fail| Reject
-    
-    style Input fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style L1 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L2 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L3 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L4 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Output fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style Reject fill:#EF4444,stroke:#DC2626,stroke-width:2px,color:#fff
-```
-
-### 4. 적응형 임계값 시스템
-
-```mermaid
-flowchart TD
-    Base["기본 임계값<br/>0.45"]
-    
-    Quality["화질 조정<br/>±0.04"]
-    Mask["마스크 조정<br/>-0.02 ~ -0.05"]
-    
-    High["고화질<br/>+0.04"]
-    Medium["중화질<br/>±0"]
-    Low["저화질<br/>-0.03"]
-    
-    Final["최종 임계값<br/>0.28 ~ 0.50"]
-    
-    Base --> Quality
-    Base --> Mask
-    
-    Quality --> High
-    Quality --> Medium
-    Quality --> Low
-    
-    High --> Final
-    Medium --> Final
-    Low --> Final
-    Mask --> Final
-    
-    style Base fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style Quality fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Mask fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Final fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
-```
-
 ### 3-4. 고급 오탐 방지 및 적응형 임계값 시스템 (시각화)
 
 <img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/a2ed646b-fb66-4dd9-ac2c-fc4695efbc5b" />
@@ -213,101 +146,6 @@ flowchart TD
 
 ### 전체 구조
 <img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/b847ee1c-729b-4a38-843f-4886341af5b5" />
-
-```mermaid
-graph TB
-    subgraph EyeSis["EyeSis System"]
-        Frontend["Frontend<br/>(ES Modules)"]
-        Backend["Backend<br/>(FastAPI)"]
-        Database["Database<br/>(PostgreSQL)"]
-        InsightFace["InsightFace<br/>(buffalo_l)"]
-        
-        Frontend <-->|WebSocket/HTTP| Backend
-        Backend <-->|SQL| Database
-        Backend -->|Model| InsightFace
-    end
-    
-    style EyeSis fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff
-    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Backend fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Database fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
-    style InsightFace fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-```
-
-### 프론트엔드 모듈 구조
-
-```mermaid
-graph TD
-    Entry["script.js<br/>(Entry Point)<br/>~2,100 lines"]
-    
-    subgraph Core["Core Modules"]
-        Config["config.js<br/>설정 및 URL"]
-        State["state.js<br/>전역 상태 관리"]
-        UI["ui.js<br/>DOM 요소 참조"]
-        Utils["utils.js<br/>유틸리티 함수"]
-    end
-    
-    subgraph Features["Feature Modules"]
-        API["api.js<br/>API 호출"]
-        Handlers["handlers.js<br/>이벤트 핸들러"]
-        Timeline["timeline.js<br/>타임라인 렌더링"]
-        Persons["persons.js<br/>인물 관리 UI"]
-        Clips["clips.js<br/>클립 기능"]
-        Snapshots["snapshots.js<br/>스냅샷 기능"]
-        Log["log.js<br/>감지 로그"]
-        Detection["detection.js<br/>박스 렌더링"]
-        Enroll["enroll.js<br/>등록 폼"]
-    end
-    
-    Entry --> Core
-    Entry --> Features
-    Core --> Features
-    
-    style Entry fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style Core fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Features fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-```
-
-### 백엔드 구조
-
-```mermaid
-graph TD
-    Main["main.py<br/>FastAPI 앱 진입점"]
-    Config["config.py<br/>설정 관리"]
-    DB["database.py<br/>SQLAlchemy 모델"]
-    
-    subgraph API["API Layer"]
-        DetectionAPI["detection.py<br/>감지 API<br/>(HTTP + WebSocket)"]
-        PersonsAPI["persons.py<br/>인물 CRUD"]
-        VideoAPI["video.py<br/>비디오 처리"]
-    end
-    
-    subgraph Services["Service Layer"]
-        FaceDetection["face_detection.py<br/>얼굴 감지"]
-        FaceEnroll["face_enroll.py<br/>인물 등록"]
-        DataLoader["data_loader.py<br/>데이터 로딩"]
-        BankManager["bank_manager.py<br/>Bank 관리"]
-        TemporalFilter["temporal_filter.py<br/>시간 필터"]
-    end
-    
-    subgraph Utils["Utils Layer"]
-        DeviceConfig["device_config.py<br/>GPU/CPU 설정"]
-        ImageUtils["image_utils.py<br/>이미지 처리"]
-        AngleDetector["face_angle_detector.py<br/>각도 감지"]
-        MaskDetector["mask_detector.py<br/>마스크 감지"]
-    end
-    
-    Main --> Config
-    Main --> DB
-    Main --> API
-    API --> Services
-    Services --> Utils
-    
-    style Main fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style API fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Services fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Utils fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-```
 
 ---
 
