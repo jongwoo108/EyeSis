@@ -170,25 +170,7 @@ def calculate_threshold(quality, mask_prob):
 
 ### 5.1 인물 등록 플로우
 
-```mermaid
-flowchart LR
-    Input["이미지 입력"]
-    Detect["얼굴 감지<br/>RetinaFace"]
-    Extract["임베딩 추출<br/>buffalo_l"]
-    Create["Bank 생성<br/>bank_base.npy"]
-    Save["DB 저장<br/>PostgreSQL"]
-    
-    Input --> Detect
-    Detect --> Extract
-    Extract --> Create
-    Create --> Save
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Extract fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Create fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style Save fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-```
+<img width="2917" height="396" alt="enroll_flow" src="https://github.com/user-attachments/assets/0e7da950-3f1d-42ba-b7bb-fb9bb4839f9f" />
 
 ### 5.2 실시간 감지 플로우
 
