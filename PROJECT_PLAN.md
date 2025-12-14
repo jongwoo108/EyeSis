@@ -122,36 +122,7 @@ sequenceDiagram
 
 #### 3.2.1 정확도 vs 속도
 
-```mermaid
-graph LR
-    subgraph Accuracy["정확도 우선"]
-        A1["모든 프레임 처리"]
-        A2["큰 Detection Size"]
-        A3["Bank 전체 비교"]
-        A4["모든 필터링 활성화"]
-    end
-    
-    subgraph Balanced["현재 설정 (균형) ★"]
-        B1["선택적 프레임 스킵"]
-        B2["(640, 640) Size"]
-        B3["Bank 우선 사용"]
-        B4["모든 필터링 활성화"]
-    end
-    
-    subgraph Speed["속도 우선"]
-        S1["프레임 스킵"]
-        S2["작은 Size"]
-        S3["Centroid만"]
-        S4["최소 필터링"]
-    end
-    
-    Accuracy -.->|Trade-off| Balanced
-    Balanced -.->|Trade-off| Speed
-    
-    style Balanced fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-    style Accuracy fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Speed fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-```
+<img width="2900" height="660" alt="tradeoff" src="https://github.com/user-attachments/assets/d3640315-451b-44d0-bb80-e7797edada25" />
 
 #### 3.2.2 임베딩 저장 방식
 
