@@ -85,38 +85,8 @@ graph LR
 ```
 
 ### 2.2 프론트엔드 모듈 아키텍처
+<img width="1524" height="1172" alt="FE_modules" src="https://github.com/user-attachments/assets/9583e763-61ea-4e75-8c5d-a56bdfe9a1c3" />
 
-```mermaid
-graph TD
-    Entry["script.js<br/>Entry Point"]
-    
-    subgraph CoreModules["Core Modules"]
-        Config["config.js"]
-        State["state.js"]
-        UI["ui.js"]
-        Utils["utils.js"]
-    end
-    
-    subgraph FeatureModules["Feature Modules"]
-        API["api.js"]
-        Handlers["handlers.js"]
-        Timeline["timeline.js"]
-        Persons["persons.js"]
-        Clips["clips.js"]
-        Snapshots["snapshots.js"]
-        Log["log.js"]
-        Detection["detection.js"]
-        Enroll["enroll.js"]
-    end
-    
-    Entry -->|imports| CoreModules
-    Entry -->|imports| FeatureModules
-    CoreModules --> FeatureModules
-    
-    style Entry fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style CoreModules fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style FeatureModules fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-```
 
 ### 2.3 데이터 흐름
 
