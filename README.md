@@ -1,4 +1,4 @@
-# FaceWatch - 실시간 얼굴 식별·추적 시스템
+# EyeSis - 실시간 얼굴 식별·추적 시스템
 
 <div align="center">
 
