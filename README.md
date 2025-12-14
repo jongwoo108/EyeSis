@@ -98,7 +98,7 @@ outputs/embeddings/{person_id}/
 - **인물별 타임라인** 시각화
 - **감지 로그** CSV 내보내기
 
-### 3. 고급 오탐 방지 시스템&emsp;&emsp;&emsp;4. 적응형 임계값 시스템
+### 3. 고급 오탐 방지 시스템&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;4. 적응형 임계값 시스템
 <img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/a2ed646b-fb66-4dd9-ac2c-fc4695efbc5b" />
 
 ---
