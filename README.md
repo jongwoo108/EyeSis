@@ -164,6 +164,7 @@ flowchart TD
     style Mask fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
     style Final fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
 ```
+<img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/a2ed646b-fb66-4dd9-ac2c-fc4695efbc5b" />
 
 ---
 
