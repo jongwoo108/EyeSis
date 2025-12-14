@@ -42,49 +42,69 @@ FaceWatch/
 ├─ outputs/                   # 출력 폴더
 │  ├─ embeddings/             # 인물별 임베딩 (사람별 폴더 구조)
 │  │   ├─ hani/
-│  │   │   ├─ bank.npy        # Bank 임베딩 (N×512)
-│  │   │   └─ centroid.npy   # Centroid 임베딩 (512)
+│  │   │   ├─ bank_base.npy        # Base Bank 임베딩 (N×512)
+│  │   │   ├─ centroid_base.npy    # Base Centroid 임베딩 (512)
+│  │   │   ├─ bank_masked.npy      # Masked Bank 임베딩 (선택적)
+│  │   │   ├─ bank_dynamic.npy     # Dynamic Bank 임베딩 (선택적)
+│  │   │   └─ centroid.npy         # 레거시 호환용
 │  │   ├─ danielle/
-│  │   │   ├─ bank.npy
-│  │   │   └─ centroid.npy
+│  │   │   └─ ...
 │  │   └─ ...
+│  ├─ extracted_frames/        # 비디오에서 추출된 프레임 (라벨링용)
+│  │   └─ <비디오명>/
+│  │      ├─ frame_*.jpg       # 프레임 이미지
+│  │      └─ annotations/       # JSON 어노테이션
+│  │         └─ frame_*.json
 │  └─ results/                 # 분석 결과 (입력 파일명 기반)
-│     └─ <파일명>/            # 입력 파일명 기반 폴더 (자동 생성)
+│     └─ <파일명>_<타임스탬프>/  # 입력 파일명 + 타임스탬프 기반 폴더
 │        ├─ matches/          # 매칭된 스냅샷
 │        ├─ logs/              # CSV 로그
 │        └─ frames/           # 추출된 프레임 (선택적)
 │
-├─ backend/
-│  ├─ main.py                      # FastAPI 백엔드 서버
-│  │                                # - /api/detect: 얼굴 감지 및 인식
-│  │                                # - /api/persons: 등록된 인물 목록
-│  │                                # - outputs/embeddings 또는 database/*.json 사용
-│  └─ database/                    # 레거시 JSON 데이터베이스 (선택적)
-│      └─ *.json                   # 인물별 임베딩 JSON 파일
+├─ backend/                   # FastAPI 백엔드 서버
+│  ├─ main.py                 # FastAPI 앱 진입점
+│  ├─ config.py               # 설정 파일
+│  ├─ database.py             # 데이터베이스 모델 및 연결
+│  ├─ init_db.py              # 데이터베이스 초기화 및 마이그레이션
+│  ├─ api/                    # API 라우터
+│  │   ├─ detection.py        # 얼굴 감지 API (HTTP + WebSocket)
+│  │   ├─ persons.py          # 인물 관리 API (CRUD)
+│  │   └─ video.py            # 비디오 처리 API
+│  ├─ services/               # 비즈니스 로직
+│  │   ├─ face_detection.py   # 얼굴 감지 핵심 로직
+│  │   ├─ face_enroll.py     # 얼굴 등록 로직
+│  │   ├─ data_loader.py      # 데이터 로딩 및 캐싱
+│  │   ├─ bank_manager.py     # Bank 관리 (Base/Masked/Dynamic)
+│  │   └─ temporal_filter.py  # 시간적 일관성 필터
+│  ├─ utils/                  # 유틸리티 모듈
+│  │   ├─ device_config.py    # GPU/CPU 설정
+│  │   ├─ image_utils.py      # 이미지 처리 유틸리티
+│  │   ├─ bbox_utils.py       # Bounding box 유틸리티
+│  │   ├─ face_angle_detector.py  # 얼굴 각도 감지
+│  │   ├─ mask_detector.py    # 마스크 감지
+│  │   └─ websocket_manager.py # WebSocket 연결 관리
+│  ├─ models/                 # 데이터 모델
+│  │   └─ schemas.py          # Pydantic 스키마
+│  └─ database/               # 레거시 JSON 데이터베이스 (선택적)
+│      └─ *.json              # 인물별 임베딩 JSON 파일
 │
-├─ src/
-│  ├─ face_enroll.py               # 얼굴 임베딩 추출 스크립트
-│  │                                # - 기본 등록: enroll 폴더에서 정면 사진 등록
-│  │                                # - 수동 추가: 이미지 폴더에서 bank에 추가
-│  ├─ face_match_cctv.py           # 통합 인식 스크립트 (권장)
-│  │                                # - 이미지/영상 모두 처리
-│  │                                # - 얼굴 각도 감지
-│  │                                # - 마스크 감지 및 적응형 임계값
-│  │                                # - 오탐 방지 (sim_gap 체크)
-│  │                                # - 식별된 얼굴의 임베딩 자동 수집
-│  │                                # - CSV 로그 및 스냅샷 저장
-│  ├─ embedding_analysis.py        # 임베딩 분석 도구
-│  └─ utils/                       # 유틸리티 모듈
-│     ├─ device_config.py          # GPU/CPU 설정
-│     ├─ gallery_loader.py        # 갤러리 로더
-│     ├─ mask_detector.py          # 마스크 감지 및 적응형 임계값
-│     └─ face_angle_detector.py   # 얼굴 각도 감지
+├─ web/                       # 웹 프론트엔드
+│  ├─ index.html              # 메인 페이지
+│  ├─ script.js               # 프론트엔드 JavaScript
+│  ├─ snapshot_functions.js   # 스냅샷 관리 함수
+│  └─ style.css               # 커스텀 스타일
 │
-├─ web/
-│  ├─ index.html                   # 웹 UI 메인 페이지
-│  ├─ script.js                    # 프론트엔드 JavaScript
-│  └─ style.css                    # 커스텀 스타일
+├─ scripts/                   # 유틸리티 스크립트
+│  ├─ rebuild_base_bank.py     # Base Bank 재구축
+│  ├─ batch_image_detection.py # 배치 이미지 감지
+│  └─ ...
 │
+├─ docs/                      # 문서
+│  ├─ SETUP.md                # 설치 가이드
+│  └─ ...
+│
+├─ requirements.txt           # Python 의존성
+├─ ngrok.yml                  # ngrok 설정
 └─ README.md
 ```
 
@@ -96,8 +116,13 @@ FaceWatch/
 - 분석용 영상: `videos/source/<파일명>.mp4`
 
 **출력 파일 위치:**
-- 임베딩: `outputs/embeddings/<인물명>/bank.npy`, `centroid.npy` (사람별 폴더 구조)
-- 분석 결과: `outputs/results/<입력파일명>/`
+- 임베딩: `outputs/embeddings/<인물명>/`
+  - `bank_base.npy`: Base Bank (정면 사진 기반)
+  - `centroid_base.npy`: Base Centroid
+  - `bank_masked.npy`: Masked Bank (마스크 착용 얼굴, 선택적)
+  - `bank_dynamic.npy`: Dynamic Bank (영상에서 자동 수집, 선택적)
+  - `centroid.npy`: 레거시 호환용
+- 분석 결과: `outputs/results/<입력파일명>_<타임스탬프>/`
 
 ---
 
@@ -117,8 +142,9 @@ python src/face_enroll.py
 - `images/enroll/` 폴더의 모든 인물을 등록
 - 각 인물별 폴더에서 정면 사진을 읽어 bank와 centroid 생성
 - **출력:**
-  - `outputs/embeddings/<person>/bank.npy` (N×512 배열)
-  - `outputs/embeddings/<person>/centroid.npy` (512 벡터)
+  - `outputs/embeddings/<person>/bank_base.npy` (N×512 배열)
+  - `outputs/embeddings/<person>/centroid_base.npy` (512 벡터)
+  - `outputs/embeddings/<person>/centroid.npy` (레거시 호환용)
 
 #### 1-2. 수동 추가 (MODE = 2)
 - `images/extracted_frames/<person>/` 폴더의 이미지들을 bank에 추가
@@ -350,9 +376,10 @@ npx http-server web -p 5500
    - `backend/init_db.py`로 마이그레이션된 데이터 사용
    - 감지 로그도 자동으로 저장됨
 
-2. **우선순위 2**: `outputs/embeddings/<person>/bank.npy` 또는 `centroid.npy` (fallback)
+2. **우선순위 2**: `outputs/embeddings/<person>/bank_base.npy` 또는 `centroid_base.npy` (fallback)
    - PostgreSQL 연결 실패 시 자동 사용
-   - `gallery_loader.py`를 통해 로드
+   - `data_loader.py`를 통해 로드
+   - 레거시 호환: `bank.npy`, `centroid.npy`도 지원
 
 3. **우선순위 3**: `backend/database/*.json` (레거시 지원)
    - JSON 파일 형식:
@@ -368,35 +395,122 @@ npx http-server web -p 5500
 
 #### 3-6. API 엔드포인트
 
-**POST `/api/detect`**
+**POST `/api/detect`** (HTTP API)
+- 얼굴 감지 및 인식 (단일 프레임 처리)
 - 요청:
   ```json
   {
     "image": "data:image/jpeg;base64,...",
-    "suspect_id": "hani"  // 선택적
+    "suspect_id": "hani",  // 선택적 (단일)
+    "suspect_ids": ["hani", "danielle"]  // 선택적 (다중)
   }
   ```
 - 응답:
   ```json
   {
     "success": true,
-    "processed_image": "data:image/jpeg;base64,...",
+    "detections": [
+      {
+        "bbox": [x1, y1, x2, y2],
+        "name": "하니",
+        "person_id": "hani",
+        "confidence": 85,
+        "status": "normal",  // "criminal" | "normal" | "unknown"
+        "similarity": 0.85,
+        "angle_type": "front",
+        "bank_type": "base"
+      }
+    ],
     "alert": false,
-    "metadata": {
-      "name": "하니",
-      "confidence": 85,
-      "status": "normal"  // "criminal" | "normal" | "unknown"
-    }
+    "snapshot_base64": "data:image/jpeg;base64,..."  // 범죄자 감지 시 포함
   }
   ```
+
+**WebSocket `/ws/detect`** (실시간 스트리밍)
+- 실시간 프레임 처리 및 결과 전송
+- 메시지 형식:
+  - 클라이언트 → 서버:
+    ```json
+    {
+      "type": "frame",
+      "data": {
+        "image": "base64_string",
+        "suspect_ids": ["hani"],  // 선택적
+        "frame_id": 123,
+        "video_time": 12.5
+      }
+    }
+    ```
+  - 서버 → 클라이언트:
+    ```json
+    {
+      "type": "detection",
+      "data": {
+        "frame_id": 123,
+        "video_timestamp": 12.5,
+        "detections": [...],
+        "alert": false,
+        "snapshot_base64": "..."  // 범죄자 감지 시
+      }
+    }
+    ```
 
 **GET `/api/persons`**
 - 등록된 모든 인물 목록 조회
 - PostgreSQL 또는 캐시에서 반환
+- 응답:
+  ```json
+  {
+    "success": true,
+    "count": 10,
+    "persons": [
+      {
+        "id": "hani",
+        "name": "하니",
+        "is_criminal": false,
+        "person_type": "normal",
+        "info": {},
+        "image_url": "/api/images/enroll/hani/hani.jpg"
+      }
+    ]
+  }
+  ```
+
+**POST `/api/enroll`**
+- 인물 등록 (정면 사진에서 임베딩 추출)
+- 요청: `multipart/form-data`
+  - `person_id`: 인물 고유 ID
+  - `name`: 인물 이름
+  - `person_type`: "criminal", "missing", "dementia", "child", "wanted"
+  - `image`: 이미지 파일
+
+**PUT `/api/persons/{person_id}`**
+- 인물 정보 수정 (이름, 타입)
+- 요청: `multipart/form-data`
+  - `name`: 새로운 이름 (선택)
+  - `person_type`: 새로운 타입 (선택)
+
+**DELETE `/api/persons/{person_id}`**
+- 인물 삭제 (DB 레코드 + 이미지 + 임베딩 파일)
 
 **GET `/api/logs?limit=100`**
 - 감지 로그 조회 (PostgreSQL에서)
 - 최근 N개 감지 기록 반환
+
+**POST `/api/extract_frames`**
+- 비디오에서 모든 프레임 추출 (라벨링용)
+- 매칭 결과 박스가 그려진 이미지 + JSON 어노테이션 생성
+
+**POST `/api/extract_clip`**
+- 비디오에서 특정 구간 클립 추출
+- 요청: `multipart/form-data`
+  - `video`: 비디오 파일
+  - `start_time`: 시작 시간 (초)
+  - `end_time`: 종료 시간 (초)
+  - `person_name`: 인물 이름
+
+**GET `/api/health`**
+- 서버 상태 확인 (WebSocket 연결 수 포함)
 
 #### 3-7. 통합 구조
 
@@ -420,7 +534,7 @@ backend/database/*.json ← 레거시
 
 - **PostgreSQL 설정**: 서버 실행 전에 PostgreSQL이 실행 중이어야 합니다
 - **데이터 마이그레이션**: 첫 실행 시 `python backend/init_db.py`로 데이터를 마이그레이션해야 합니다
-- **인물 등록**: 웹 UI 사용 전에 `python src/face_enroll.py`로 인물을 등록하거나, 마이그레이션을 실행해야 합니다
+- **인물 등록**: 웹 UI에서 `/api/enroll` 엔드포인트를 사용하거나, `python backend/services/face_enroll.py`로 인물을 등록할 수 있습니다
 - **suspect_id 매핑**: 프론트엔드의 `data-suspect-id`는 실제 `person_id`와 일치해야 합니다
 - **Fallback 동작**: PostgreSQL 연결 실패 시 자동으로 `outputs/embeddings`를 사용합니다 (서버 로그 확인)
 - **CORS**: 개발 환경에서는 CORS가 모두 허용되어 있지만, 프로덕션에서는 제한해야 합니다
@@ -430,25 +544,74 @@ backend/database/*.json ← 레거시
 ### 4. 임베딩 분석 도구 (Embedding Analysis)
 
 ```bash
-python src/embedding_analysis.py
+python notebooks/analyze_improvements.py
 ```
 
-임베딩 파일의 통계 및 분포를 분석합니다.
+임베딩 파일의 통계 및 분포를 분석합니다. (노트북 파일 사용)
 
 ---
+
+## 설치 및 설정
+
+### 1. 의존성 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+주요 의존성:
+- `fastapi`, `uvicorn`: 웹 서버
+- `insightface`: 얼굴 인식 모델
+- `onnxruntime-gpu` 또는 `onnxruntime`: 모델 실행 (GPU 권장)
+- `opencv-python`, `opencv-contrib-python`: 이미지/비디오 처리
+- `psycopg2-binary`: PostgreSQL 연결
+- `sqlalchemy`: ORM
+- `python-dotenv`: 환경 변수 관리
+
+### 2. PostgreSQL 설정
+
+자세한 내용은 `backend/SETUP.md`를 참조하세요.
+
+```bash
+# PostgreSQL 설치 후 데이터베이스 생성
+psql -U postgres
+CREATE DATABASE facewatch;
+\q
+```
+
+### 3. 환경 변수 설정
+
+`backend/.env` 파일 생성:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/facewatch
+HOST=0.0.0.0
+PORT=5000
+INSIGHTFACE_MODEL=buffalo_l
+INSIGHTFACE_CTX_ID=0  # GPU: 0, CPU: -1
+```
+
+### 4. 데이터베이스 초기화
+
+```bash
+python backend/init_db.py
+```
+
+기존 `outputs/embeddings` 또는 `backend/database/*.json` 데이터를 PostgreSQL로 마이그레이션합니다.
 
 ## 설정 및 사용법
 
 ### 기본 설정
 
 **임계값 (Threshold):**
-- 기본 임계값: `BASE_THRESH = 0.32`
+- 기본 임계값: `MAIN_THRESHOLD = 0.45` (backend/config.py)
+- 용의자 모드: `SUSPECT_THRESHOLD = 0.48`
 - 화질 기반 자동 조정:
-  - 고화질: `0.40` (오탐 방지 강화)
-  - 중화질: `0.32` (기본값)
-  - 저화질: `0.33` (인식률 유지, 최소 0.32)
+  - 고화질: 기본값 +0.04 (오탐 방지 강화)
+  - 중화질: 기본값 유지
+  - 저화질: 기본값 -0.03 (인식률 유지)
 - 마스크 착용 시 추가 조정: `-0.02 ~ -0.05`
-- 최소 임계값: `0.28` (고화질), `0.30` (중화질), `0.28` (저화질)
+- Dynamic Bank 중복 체크: `DYNAMIC_BANK_SIMILARITY_THRESHOLD = 0.9`
 
 **입력 파일:**
 - 이미지: `images/source/` 폴더에 배치
@@ -467,13 +630,14 @@ python src/embedding_analysis.py
 | 분야 | 기술 |
 |------|------|
 | Face Recognition | InsightFace (buffalo_l), ONNX Runtime |
-| Detection | RetinaFace (InsightFace), YOLOv12n-face |
-| Tracking | IoU-based lightweight tracking |
-| Backend API | FastAPI, Uvicorn |
-| Database | PostgreSQL, SQLAlchemy |
+| Detection | RetinaFace (InsightFace 내장) |
+| Tracking | IoU-based lightweight tracking, Temporal Filter |
+| Backend API | FastAPI, Uvicorn, WebSocket |
+| Database | PostgreSQL, SQLAlchemy, psycopg2-binary |
 | Frontend | HTML5, JavaScript, Tailwind CSS |
-| Embedding Analysis | NumPy, Matplotlib, Seaborn, Scikit-learn |
-| Video Handling | OpenCV, imageio |
+| Embedding Storage | NumPy (.npy), JSON (레거시) |
+| Video Handling | OpenCV, ffmpeg (클립 추출) |
+| Image Processing | OpenCV, Pillow |
 | Language | Python 3.9+ |
 
 ---
@@ -485,7 +649,11 @@ python src/embedding_analysis.py
 - 얼굴 → 512-d vector (InsightFace buffalo_l)
 - L2-normalized
 - cosine similarity로 비교
-- Bank 기반 매칭 (여러 임베딩 중 최고 유사도 사용)
+- **Multi-Bank 시스템**:
+  - **Base Bank**: 정면 사진 기반 등록 (`bank_base.npy`)
+  - **Masked Bank**: 마스크 착용 얼굴 임베딩 (`bank_masked.npy`)
+  - **Dynamic Bank**: 영상에서 자동 수집된 다양한 각도 임베딩 (`bank_dynamic.npy`)
+- Bank별 최고 유사도 사용, 최종적으로 가장 높은 유사도 선택
 
 ### 2. 마스크 감지 및 적응형 임계값 ⭐ (추가 기능)
 
@@ -533,46 +701,64 @@ python src/embedding_analysis.py
 - 검토 대상 자동 분리: 의심스러운 매칭을 `matches/review/` 폴더에 별도 저장
 - CSV 로그로 모든 감지 기록 저장 (화질, 검토 사유 포함)
 
+### 7. Temporal Filter (시간적 일관성 필터) ⭐
+
+- 최근 N프레임(기본 5프레임) 내 매칭 기록 추적
+- 연속적으로 매칭된 경우에만 최종 확정
+- 일시적 오탐 자동 제거
+- WebSocket 연결별로 독립적인 상태 관리
+
+### 8. Bank 관리 시스템 ⭐
+
+- **Base Bank**: 초기 등록 시 생성 (정면 사진)
+- **Masked Bank**: 마스크 착용 가능성이 높은 얼굴 자동 수집
+- **Dynamic Bank**: 영상 분석 시 다양한 각도 얼굴 자동 수집
+- 각도별 다양성 체크 및 중복 방지 (유사도 0.9 이상)
+
 ---
 
 ## 사용 예시
 
 ### 1. 인물 등록
 
+**방법 1: 웹 UI 사용 (권장)**
+1. 백엔드 서버 실행: `uvicorn backend.main:app --reload --host 0.0.0.0 --port 5000`
+2. 웹 브라우저에서 접속: http://localhost:5000
+3. "인물 등록" 메뉴에서 이미지 업로드 및 정보 입력
+
+**방법 2: 스크립트 사용**
 ```bash
 # 1. images/enroll/ 폴더에 인물별 폴더 생성
 #    images/enroll/hani/hani.jpg
 #    images/enroll/danielle/danielle.jpg
 
 # 2. 등록 실행
-python src/face_enroll.py
+python backend/services/face_enroll.py
 # MODE = 1로 설정하여 기본 등록 실행
 ```
 
-### 2. 이미지 분석
+### 2. 웹 UI를 통한 실시간 분석 (권장)
 
 ```bash
-# 1. 분석할 이미지를 images/source/ 폴더에 배치
-#    images/source/test.jpg
+# 1. 백엔드 서버 실행
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 5000
 
-# 2. 스크립트에서 파일명 설정
-#    input_filename = "test.jpg"
+# 2. 웹 브라우저에서 접속
+#    http://localhost:5000
 
-# 3. 분석 실행
-python src/face_match_cctv.py
+# 3. 영상 파일 업로드 및 인물 선택 후 모니터링 시작
 ```
 
-### 3. 영상 분석
+### 3. 스크립트를 통한 배치 분석
 
 ```bash
-# 1. 분석할 영상을 videos/source/ 폴더에 배치
-#    videos/source/yh.MOV
+# 이미지 분석
+# 스크립트 내부에서 input_filename = "test.jpg" 설정
+python scripts/batch_image_detection.py
 
-# 2. 스크립트에서 파일명 설정
-#    input_filename = "yh.MOV"
-
-# 3. 분석 실행
-python src/face_match_cctv.py
+# 영상 분석
+# 스크립트 내부에서 input_filename = "yh.MOV" 설정
+python scripts/batch_image_detection_dynamic.py
 ```
 
 ### 4. 결과 확인
@@ -581,8 +767,11 @@ python src/face_match_cctv.py
 outputs/
 ├─ embeddings/            # 임베딩 파일
 │   └─ hani/
-│      ├─ bank.npy
-│      └─ centroid.npy
+│      ├─ bank_base.npy        # Base Bank
+│      ├─ centroid_base.npy     # Base Centroid
+│      ├─ bank_masked.npy       # Masked Bank (선택적)
+│      ├─ bank_dynamic.npy      # Dynamic Bank (선택적)
+│      └─ centroid.npy          # 레거시 호환용
 └─ results/               # 분석 결과
    └─ yh_20240101_120000/  # 입력 파일명 + 타임스탬프
       ├─ matches/         # 매칭된 스냅샷
@@ -629,10 +818,11 @@ outputs/
 - **CSV 내보내기**: 감지 로그를 CSV 파일로 다운로드 (한글 지원)
 
 **계획 중:**
-- PostgreSQL 데이터베이스 도입
 - YOLOv9 기반 fast detector 추가
 - Face anti-spoofing (딥페이크 방지)
-- 실시간 스트리밍 지원
+- 실시간 스트리밍 지원 (RTSP, RTMP)
+- 모바일 앱 개발
+- 클라우드 배포 가이드 (Docker, Kubernetes)
 
 ---
 
