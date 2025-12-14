@@ -203,11 +203,16 @@ flowchart TD
     style Final fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
 ```
 
+### 3-4. 고급 오탐 방지 및 적응형 임계값 시스템 (시각화)
+
+<img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/a2ed646b-fb66-4dd9-ac2c-fc4695efbc5b" />
+
 ---
 
 ## 시스템 아키텍처
 
 ### 전체 구조
+<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/b847ee1c-729b-4a38-843f-4886341af5b5" />
 
 ```mermaid
 graph TB
