@@ -59,16 +59,7 @@ notebooks/
 .env.*.local
 
 # Output files and results
-outputs/results/
-outputs/embeddings/
-outputs/embeddings_manual/
-outputs/evaluation
-outputs/test_results/
-outputs/test_results_base_only/
-outputs/test_results_base_only_easy/
-outputs/test_results_dynamic
-outputs/test_results_dynamic_easy
-outputs/test_results_masked_easy
+outputs/
 
 *.npy
 *.npz
