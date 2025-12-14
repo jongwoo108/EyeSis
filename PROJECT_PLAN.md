@@ -68,84 +68,54 @@ mindmap
 ### 2.1 전체 시스템 구조
 
 ```mermaid
-graph TB
-    subgraph Client["Client Layer"]
-        subgraph Frontend["Web Frontend"]
-            Handlers["handlers"]
-            Timeline["timeline"]
-            Persons["persons"]
-            Detection["detection"]
-            Clips["clips"]
-            Snapshots["snapshots"]
-            Log["log"]
-            Enroll["enroll"]
-            Core["Core:<br/>config | state | ui | utils"]
-        end
-    end
+graph LR
+    Frontend["F/E<br/>(ES Modules)"]
+    Backend["B/E<br/>(FastAPI)"]
+    Database["DB<br/>(PostgreSQL)"]
+    InsightFace["InsightFace<br/>(buffalo_l)"]
     
-    subgraph API["API Layer"]
-        FastAPI["FastAPI Server"]
-        Endpoints["API Endpoints<br/>/ws/detect<br/>/api/detect<br/>/api/persons<br/>/api/enroll<br/>/api/logs"]
-    end
+    Frontend -->|WebSocket/HTTP| Backend
+    Backend -->|SQL| Database
+    Backend -->|Model| InsightFace
     
-    subgraph Service["Service Layer"]
-        FaceDetection["FaceDetection<br/>InsightFace<br/>buffalo_l"]
-        BankManager["BankManager<br/>Base Bank<br/>Dynamic Bank<br/>Masked Bank"]
-        TemporalFilter["TemporalFilter<br/>연속성 체크"]
-    end
-    
-    subgraph Data["Data Layer"]
-        PostgreSQL["PostgreSQL<br/>persons<br/>detection_logs<br/>embeddings"]
-        FileStorage["File Storage<br/>bank_base.npy<br/>bank_dynamic.npy<br/>centroid_base.npy"]
-    end
-    
-    Frontend -->|WebSocket/HTTP| FastAPI
-    FastAPI --> Endpoints
-    Endpoints --> FaceDetection
-    Endpoints --> BankManager
-    Endpoints --> TemporalFilter
-    FaceDetection --> PostgreSQL
-    BankManager --> FileStorage
-    BankManager --> PostgreSQL
-    
-    style Client fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style API fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Service fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Data fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
+    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style Backend fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Database fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
+    style InsightFace fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
 ```
 
 ### 2.2 프론트엔드 모듈 아키텍처
 
 ```mermaid
 graph TD
-    Entry["script.js<br/>Entry Point<br/>~2,100 lines"]
+    Entry["script.js<br/>Entry Point"]
     
     subgraph CoreModules["Core Modules"]
-        Config["config.js<br/>API URL, WebSocket URL"]
-        State["state.js<br/>전역 상태 관리"]
-        UI["ui.js<br/>DOM 요소 참조"]
-        Utils["utils.js<br/>유틸리티 함수"]
+        Config["config.js"]
+        State["state.js"]
+        UI["ui.js"]
+        Utils["utils.js"]
     end
     
     subgraph FeatureModules["Feature Modules"]
-        API["api.js<br/>API 호출"]
-        Handlers["handlers.js<br/>이벤트 핸들러<br/>(15+ 함수)"]
-        Timeline["timeline.js<br/>타임라인 렌더링"]
-        Persons["persons.js<br/>인물 카드 관리"]
-        Clips["clips.js<br/>클립 기능"]
-        Snapshots["snapshots.js<br/>스냅샷 기능"]
-        Log["log.js<br/>감지 로그"]
-        Detection["detection.js<br/>박스 렌더링"]
-        Enroll["enroll.js<br/>등록 폼"]
+        API["api.js"]
+        Handlers["handlers.js"]
+        Timeline["timeline.js"]
+        Persons["persons.js"]
+        Clips["clips.js"]
+        Snapshots["snapshots.js"]
+        Log["log.js"]
+        Detection["detection.js"]
+        Enroll["enroll.js"]
     end
     
     Entry -->|imports| CoreModules
     Entry -->|imports| FeatureModules
     CoreModules --> FeatureModules
     
-    style Entry fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style CoreModules fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style FeatureModules fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
+    style Entry fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
+    style CoreModules fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style FeatureModules fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
 ```
 
 ### 2.3 데이터 흐름
@@ -222,9 +192,9 @@ graph LR
     Accuracy -.->|Trade-off| Balanced
     Balanced -.->|Trade-off| Speed
     
-    style Balanced fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
-    style Accuracy fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Speed fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
+    style Balanced fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
+    style Accuracy fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Speed fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
 ```
 
 #### 3.2.2 임베딩 저장 방식
@@ -244,9 +214,9 @@ graph LR
 graph TD
     Query["Query Embedding<br/>(512-d)"]
     
-    BaseBank["Base Bank<br/>(N × 512)<br/>초기 등록<br/>정면 사진<br/>고품질 임베딩"]
-    DynamicBank["Dynamic Bank<br/>(M × 512)<br/>자동 수집<br/>영상 분석 시<br/>다양한 각도/조명"]
-    MaskedBank["Masked Bank<br/>(K × 512)<br/>마스크 착용 얼굴<br/>낮은 임계값 적용"]
+    BaseBank["Base Bank<br/>(N × 512)<br/>초기 등록: 정면 사진"]
+    DynamicBank["Dynamic Bank<br/>(M × 512)<br/>자동 수집: 다양한 각도/조명"]
+    MaskedBank["Masked Bank<br/>(K × 512)<br/>마스크 착용 얼굴"]
     
     Match["Best Match<br/>= max(sim(query, all_banks))"]
     
@@ -258,11 +228,11 @@ graph TD
     DynamicBank --> Match
     MaskedBank --> Match
     
-    style Query fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style BaseBank fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style DynamicBank fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style MaskedBank fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Match fill:#8B5CF6,stroke:#6D28D9,stroke-width:3px,color:#fff
+    style Query fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
+    style BaseBank fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style DynamicBank fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style MaskedBank fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
+    style Match fill:#A78BFA,stroke:#8B5CF6,stroke-width:3px,color:#fff
 ```
 
 ### 4.2 다층 오탐 방지 시스템
@@ -273,32 +243,65 @@ flowchart TD
     
     L1["L1: sim_gap 체크<br/>1위-2위 유사도 차이 ≥5%"]
     L2["L2: bbox 필터링<br/>동일 영역 다중 매칭 제거"]
-    L3["L3: 연속성 체크<br/>최근 5프레임 내 동일 인물"]
-    L4["L4: 화질 임계값<br/>동적 임계값 조정"]
+    L3["L3: 프레임 연속성<br/>최근 5프레임 내 동일 인물"]
+    L4["L4: 화질 적응형 임계값<br/>환경별 동적 조정"]
     
-    Final["Final Match ✓"]
-    Reject["Reject"]
+    Output["Final Match ✓"]
     
     Input --> L1
     L1 -->|Pass| L2
-    L1 -->|Fail| Reject
     L2 -->|Pass| L3
-    L2 -->|Fail| Reject
     L3 -->|Pass| L4
+    L4 -->|Pass| Output
+    
+    L1 -->|Fail| Reject["Reject"]
+    L2 -->|Fail| Reject
     L3 -->|Fail| Reject
-    L4 -->|Pass| Final
     L4 -->|Fail| Reject
     
-    style Input fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style L1 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L2 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L3 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style L4 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Final fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
-    style Reject fill:#EF4444,stroke:#DC2626,stroke-width:2px,color:#fff
+    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style L1 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style L2 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style L3 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style L4 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style Output fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
+    style Reject fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
 ```
 
-### 4.3 적응형 임계값 계산
+### 4.3 적응형 임계값 시스템
+
+```mermaid
+flowchart TD
+    Base["기본 임계값<br/>0.45"]
+    
+    Quality["화질 조정<br/>±0.04"]
+    Mask["마스크 조정<br/>-0.02 ~ -0.05"]
+    
+    High["고화질<br/>+0.04"]
+    Medium["중화질<br/>±0"]
+    Low["저화질<br/>-0.03"]
+    
+    Final["최종 임계값<br/>0.28 ~ 0.50"]
+    
+    Base --> Quality
+    Base --> Mask
+    
+    Quality --> High
+    Quality --> Medium
+    Quality --> Low
+    
+    High --> Final
+    Medium --> Final
+    Low --> Final
+    Mask --> Final
+    
+    style Base fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
+    style Quality fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Mask fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
+    style Final fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
+```
+
+### 4.4 적응형 임계값 계산 로직
 
 ```python
 def calculate_threshold(quality, mask_prob):
@@ -325,24 +328,23 @@ def calculate_threshold(quality, mask_prob):
 ### 5.1 인물 등록 플로우
 
 ```mermaid
-flowchart TD
+flowchart LR
     Input["이미지 입력"]
-    
-    Detect["얼굴 감지<br/>RetinaFace<br/>(bboxes)"]
-    Extract["임베딩 추출<br/>buffalo_l<br/>(512-d)<br/>L2 정규화"]
-    Create["Bank 생성<br/>bank_base.npy (N × 512)<br/>centroid_base.npy (512)"]
-    Save["DB 저장 + File 저장<br/>PostgreSQL + .npy"]
+    Detect["얼굴 감지<br/>RetinaFace"]
+    Extract["임베딩 추출<br/>buffalo_l"]
+    Create["Bank 생성<br/>bank_base.npy"]
+    Save["DB 저장<br/>PostgreSQL"]
     
     Input --> Detect
     Detect --> Extract
     Extract --> Create
     Create --> Save
     
-    style Input fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Detect fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Extract fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Create fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
-    style Save fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
+    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style Extract fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
+    style Create fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
+    style Save fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
 ```
 
 ### 5.2 실시간 감지 플로우
@@ -350,16 +352,11 @@ flowchart TD
 ```mermaid
 flowchart TD
     Input["프레임 입력"]
-    
-    Skip{"프레임 스킵?<br/>이전 처리 중이면 스킵"}
+    Skip{"프레임 스킵?"}
     Detect["얼굴 감지<br/>RetinaFace"]
-    
-    Process["각 얼굴 처리<br/>• 임베딩 추출<br/>• 각도 추정<br/>• 화질 추정<br/>• Bank 매칭<br/>• 마스크 추정<br/>• 임계값 계산"]
-    
-    Filter["오탐 방지 필터링<br/>L1-L4 다층 필터"]
-    
-    Classify["결과 분류<br/>• 매칭 확정<br/>• 검토 대상<br/>• 미매칭"]
-    
+    Process["임베딩 추출<br/>Bank 매칭<br/>임계값 계산"]
+    Filter["오탐 방지 필터링<br/>L1-L4"]
+    Classify["결과 분류"]
     Send["클라이언트 전송"]
     
     Input --> Skip
@@ -370,13 +367,13 @@ flowchart TD
     Filter --> Classify
     Classify --> Send
     
-    style Input fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Skip fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Detect fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Process fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
-    style Filter fill:#EF4444,stroke:#DC2626,stroke-width:2px,color:#fff
-    style Classify fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff
-    style Send fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
+    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Skip fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
+    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style Process fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
+    style Filter fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
+    style Classify fill:#818CF8,stroke:#6366F1,stroke-width:2px,color:#fff
+    style Send fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
 ```
 
 ---
@@ -448,10 +445,10 @@ graph LR
         FPR["FPR<br/><5%"]
     end
     
-    style Latency fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
-    style Throughput fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Memory fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
-    style Accuracy fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
+    style Latency fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
+    style Throughput fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
+    style Memory fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
+    style Accuracy fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
 ```
 
 ---
@@ -467,24 +464,6 @@ graph LR
 | **데이터 암호화** | HTTPS + WSS | ✅ 지원 |
 | **입력 검증** | Pydantic 스키마 | ✅ 적용 |
 
-### 8.2 확장성 로드맵
-
-```mermaid
-gantt
-    title 확장성 로드맵
-    dateFormat YYYY-MM
-    section Phase 1 완료
-    단일 서버           :done, phase1-1, 2024-01, 2024-06
-    단일 DB             :done, phase1-2, 2024-01, 2024-06
-    ES Modules          :done, phase1-3, 2024-07, 2024-09
-    section Phase 2 진행 중
-    Anti-Spoofing       :active, phase2-1, 2024-10, 2025-03
-    다중 카메라         :active, phase2-2, 2024-12, 2025-05
-    section Phase 3 계획
-    분산 처리           :phase3-1, 2025-06, 2025-12
-    클라우드 배포       :phase3-2, 2025-06, 2025-12
-    모바일 앱           :phase3-3, 2025-09, 2026-03
-```
 
 ---
 
