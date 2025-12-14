@@ -137,30 +137,8 @@ sequenceDiagram
 
 ### 4.1 Multi-Bank 임베딩 시스템
 
-```mermaid
-graph TD
-    Query["Query Embedding<br/>(512-d)"]
-    
-    BaseBank["Base Bank<br/>(N × 512)<br/>초기 등록: 정면 사진"]
-    DynamicBank["Dynamic Bank<br/>(M × 512)<br/>자동 수집: 다양한 각도/조명"]
-    MaskedBank["Masked Bank<br/>(K × 512)<br/>마스크 착용 얼굴"]
-    
-    Match["Best Match<br/>= max(sim(query, all_banks))"]
-    
-    Query --> BaseBank
-    Query --> DynamicBank
-    Query --> MaskedBank
-    
-    BaseBank --> Match
-    DynamicBank --> Match
-    MaskedBank --> Match
-    
-    style Query fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style BaseBank fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style DynamicBank fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style MaskedBank fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Match fill:#A78BFA,stroke:#8B5CF6,stroke-width:3px,color:#fff
-```
+<img width="1572" height="1061" alt="multi-bank" src="https://github.com/user-attachments/assets/4e25b700-a96f-44f4-aa62-f9e0b98334a1" />
+
 
 ### 4.2 다층 오탐 방지 시스템
 
