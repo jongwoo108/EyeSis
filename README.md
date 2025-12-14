@@ -106,7 +106,8 @@ outputs/embeddings/{person_id}/
 ## 시스템 아키텍처
 
 ### 전체 구조
-<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/f72522c6-009a-41f1-a3e3-5313c9a342f0" />
+<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/b847ee1c-729b-4a38-843f-4886341af5b5" />
+
 
 ---
 
