@@ -100,20 +100,68 @@ outputs/embeddings/{person_id}/
 
 ### 3. 고급 오탐 방지 시스템
 
-| 레벨 | 방법 | 효과 |
-|------|------|------|
-| L1 | sim_gap 체크 | 1위/2위 유사도 차이 검증 |
-| L2 | bbox 기반 필터링 | 동일 영역 다중 매칭 제거 |
-| L3 | 프레임 연속성 | 시간적 일관성 검증 |
-| L4 | 화질 적응형 임계값 | 환경별 동적 조정 |
+```mermaid
+flowchart TD
+    Input["Input Detection"]
+    
+    L1["L1: sim_gap 체크<br/>1위-2위 유사도 차이 ≥5%"]
+    L2["L2: bbox 필터링<br/>동일 영역 다중 매칭 제거"]
+    L3["L3: 프레임 연속성<br/>최근 5프레임 내 동일 인물"]
+    L4["L4: 화질 적응형 임계값<br/>환경별 동적 조정"]
+    
+    Output["Final Match ✓"]
+    
+    Input --> L1
+    L1 -->|Pass| L2
+    L2 -->|Pass| L3
+    L3 -->|Pass| L4
+    L4 -->|Pass| Output
+    
+    L1 -->|Fail| Reject["Reject"]
+    L2 -->|Fail| Reject
+    L3 -->|Fail| Reject
+    L4 -->|Fail| Reject
+    
+    style Input fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
+    style L1 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style L2 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style L3 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style L4 fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style Output fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
+    style Reject fill:#EF4444,stroke:#DC2626,stroke-width:2px,color:#fff
+```
 
 ### 4. 적응형 임계값 시스템
 
-```
-기본 임계값: 0.45
-    ├── 화질 조정: ±0.04
-    ├── 마스크 조정: -0.02~-0.05
-    └── 최종 범위: 0.28~0.50
+```mermaid
+flowchart TD
+    Base["기본 임계값<br/>0.45"]
+    
+    Quality["화질 조정<br/>±0.04"]
+    Mask["마스크 조정<br/>-0.02 ~ -0.05"]
+    
+    High["고화질<br/>+0.04"]
+    Medium["중화질<br/>±0"]
+    Low["저화질<br/>-0.03"]
+    
+    Final["최종 임계값<br/>0.28 ~ 0.50"]
+    
+    Base --> Quality
+    Base --> Mask
+    
+    Quality --> High
+    Quality --> Medium
+    Quality --> Low
+    
+    High --> Final
+    Medium --> Final
+    Low --> Final
+    Mask --> Final
+    
+    style Base fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
+    style Quality fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
+    style Mask fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
+    style Final fill:#10B981,stroke:#059669,stroke-width:3px,color:#fff
 ```
 
 ---
@@ -122,69 +170,99 @@ outputs/embeddings/{person_id}/
 
 ### 전체 구조
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        FaceWatch                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐     ┌──────────────┐     ┌─────────────┐  │
-│  │   Frontend   │────▶│   Backend    │────▶│  Database   │  │
-│  │  (ES Modules)│◀────│  (FastAPI)   │◀────│ (PostgreSQL)│  │
-│  └──────────────┘     └──────────────┘     └─────────────┘  │
-│         │                    │                               │
-│         │              ┌─────┴─────┐                        │
-│         │              │InsightFace │                        │
-│    WebSocket           │(buffalo_l) │                        │
-│         │              └───────────┘                        │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph FaceWatch["FaceWatch System"]
+        Frontend["Frontend<br/>(ES Modules)"]
+        Backend["Backend<br/>(FastAPI)"]
+        Database["Database<br/>(PostgreSQL)"]
+        InsightFace["InsightFace<br/>(buffalo_l)"]
+        
+        Frontend <-->|WebSocket/HTTP| Backend
+        Backend <-->|SQL| Database
+        Backend -->|Model| InsightFace
+    end
+    
+    style FaceWatch fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff
+    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style Backend fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
+    style Database fill:#8B5CF6,stroke:#6D28D9,stroke-width:2px,color:#fff
+    style InsightFace fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
 ```
 
 ### 프론트엔드 모듈 구조
 
-```
-web/
-├── index.html           # 메인 페이지
-├── style.css            # 커스텀 스타일
-├── script.js            # 메인 진입점 (~2,100줄)
-└── modules/             # ES Modules (13개)
-    ├── config.js        # 설정 및 URL
-    ├── state.js         # 전역 상태 관리
-    ├── ui.js            # DOM 요소 참조
-    ├── utils.js         # 유틸리티 함수
-    ├── api.js           # API 호출
-    ├── handlers.js      # 이벤트 핸들러
-    ├── timeline.js      # 타임라인 렌더링
-    ├── persons.js       # 인물 관리 UI
-    ├── clips.js         # 클립 기능
-    ├── snapshots.js     # 스냅샷 기능
-    ├── log.js           # 감지 로그
-    ├── detection.js     # 박스 렌더링
-    └── enroll.js        # 등록 폼
+```mermaid
+graph TD
+    Entry["script.js<br/>(Entry Point)<br/>~2,100 lines"]
+    
+    subgraph Core["Core Modules"]
+        Config["config.js<br/>설정 및 URL"]
+        State["state.js<br/>전역 상태 관리"]
+        UI["ui.js<br/>DOM 요소 참조"]
+        Utils["utils.js<br/>유틸리티 함수"]
+    end
+    
+    subgraph Features["Feature Modules"]
+        API["api.js<br/>API 호출"]
+        Handlers["handlers.js<br/>이벤트 핸들러"]
+        Timeline["timeline.js<br/>타임라인 렌더링"]
+        Persons["persons.js<br/>인물 관리 UI"]
+        Clips["clips.js<br/>클립 기능"]
+        Snapshots["snapshots.js<br/>스냅샷 기능"]
+        Log["log.js<br/>감지 로그"]
+        Detection["detection.js<br/>박스 렌더링"]
+        Enroll["enroll.js<br/>등록 폼"]
+    end
+    
+    Entry --> Core
+    Entry --> Features
+    Core --> Features
+    
+    style Entry fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
+    style Core fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style Features fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
 ```
 
 ### 백엔드 구조
 
-```
-backend/
-├── main.py              # FastAPI 앱 진입점
-├── config.py            # 설정 관리
-├── database.py          # SQLAlchemy 모델
-├── api/                 # API 라우터
-│   ├── detection.py     # 감지 API (HTTP + WebSocket)
-│   ├── persons.py       # 인물 CRUD
-│   └── video.py         # 비디오 처리
-├── services/            # 비즈니스 로직
-│   ├── face_detection.py
-│   ├── face_enroll.py
-│   ├── data_loader.py
-│   ├── bank_manager.py
-│   └── temporal_filter.py
-└── utils/               # 유틸리티
-    ├── device_config.py
-    ├── image_utils.py
-    ├── face_angle_detector.py
-    └── mask_detector.py
+```mermaid
+graph TD
+    Main["main.py<br/>FastAPI 앱 진입점"]
+    Config["config.py<br/>설정 관리"]
+    DB["database.py<br/>SQLAlchemy 모델"]
+    
+    subgraph API["API Layer"]
+        DetectionAPI["detection.py<br/>감지 API<br/>(HTTP + WebSocket)"]
+        PersonsAPI["persons.py<br/>인물 CRUD"]
+        VideoAPI["video.py<br/>비디오 처리"]
+    end
+    
+    subgraph Services["Service Layer"]
+        FaceDetection["face_detection.py<br/>얼굴 감지"]
+        FaceEnroll["face_enroll.py<br/>인물 등록"]
+        DataLoader["data_loader.py<br/>데이터 로딩"]
+        BankManager["bank_manager.py<br/>Bank 관리"]
+        TemporalFilter["temporal_filter.py<br/>시간 필터"]
+    end
+    
+    subgraph Utils["Utils Layer"]
+        DeviceConfig["device_config.py<br/>GPU/CPU 설정"]
+        ImageUtils["image_utils.py<br/>이미지 처리"]
+        AngleDetector["face_angle_detector.py<br/>각도 감지"]
+        MaskDetector["mask_detector.py<br/>마스크 감지"]
+    end
+    
+    Main --> Config
+    Main --> DB
+    Main --> API
+    API --> Services
+    Services --> Utils
+    
+    style Main fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
+    style API fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
+    style Services fill:#3B82F6,stroke:#1E40AF,stroke-width:2px,color:#fff
+    style Utils fill:#F59E0B,stroke:#D97706,stroke-width:2px,color:#fff
 ```
 
 ---
