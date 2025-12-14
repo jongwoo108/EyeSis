@@ -67,56 +67,12 @@ mindmap
 
 ### 2.1 전체 시스템 구조
 
-```mermaid
-graph LR
-    Frontend["F/E<br/>(ES Modules)"]
-    Backend["B/E<br/>(FastAPI)"]
-    Database["DB<br/>(PostgreSQL)"]
-    InsightFace["InsightFace<br/>(buffalo_l)"]
-    
-    Frontend -->|WebSocket/HTTP| Backend
-    Backend -->|SQL| Database
-    Backend -->|Model| InsightFace
-    
-    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Backend fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Database fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style InsightFace fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-```
+<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/b922c33b-8fb8-4b13-bd2c-1a5723da6947" />
+
 
 ### 2.2 프론트엔드 모듈 아키텍처
+<img width="1524" height="1172" alt="FE_modules" src="https://github.com/user-attachments/assets/9583e763-61ea-4e75-8c5d-a56bdfe9a1c3" />
 
-```mermaid
-graph TD
-    Entry["script.js<br/>Entry Point"]
-    
-    subgraph CoreModules["Core Modules"]
-        Config["config.js"]
-        State["state.js"]
-        UI["ui.js"]
-        Utils["utils.js"]
-    end
-    
-    subgraph FeatureModules["Feature Modules"]
-        API["api.js"]
-        Handlers["handlers.js"]
-        Timeline["timeline.js"]
-        Persons["persons.js"]
-        Clips["clips.js"]
-        Snapshots["snapshots.js"]
-        Log["log.js"]
-        Detection["detection.js"]
-        Enroll["enroll.js"]
-    end
-    
-    Entry -->|imports| CoreModules
-    Entry -->|imports| FeatureModules
-    CoreModules --> FeatureModules
-    
-    style Entry fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style CoreModules fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style FeatureModules fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-```
 
 ### 2.3 데이터 흐름
 
@@ -166,36 +122,7 @@ sequenceDiagram
 
 #### 3.2.1 정확도 vs 속도
 
-```mermaid
-graph LR
-    subgraph Accuracy["정확도 우선"]
-        A1["모든 프레임 처리"]
-        A2["큰 Detection Size"]
-        A3["Bank 전체 비교"]
-        A4["모든 필터링 활성화"]
-    end
-    
-    subgraph Balanced["현재 설정 (균형) ★"]
-        B1["선택적 프레임 스킵"]
-        B2["(640, 640) Size"]
-        B3["Bank 우선 사용"]
-        B4["모든 필터링 활성화"]
-    end
-    
-    subgraph Speed["속도 우선"]
-        S1["프레임 스킵"]
-        S2["작은 Size"]
-        S3["Centroid만"]
-        S4["최소 필터링"]
-    end
-    
-    Accuracy -.->|Trade-off| Balanced
-    Balanced -.->|Trade-off| Speed
-    
-    style Balanced fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-    style Accuracy fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Speed fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-```
+<img width="2900" height="660" alt="tradeoff" src="https://github.com/user-attachments/assets/d3640315-451b-44d0-bb80-e7797edada25" />
 
 #### 3.2.2 임베딩 저장 방식
 
@@ -210,96 +137,12 @@ graph LR
 
 ### 4.1 Multi-Bank 임베딩 시스템
 
-```mermaid
-graph TD
-    Query["Query Embedding<br/>(512-d)"]
-    
-    BaseBank["Base Bank<br/>(N × 512)<br/>초기 등록: 정면 사진"]
-    DynamicBank["Dynamic Bank<br/>(M × 512)<br/>자동 수집: 다양한 각도/조명"]
-    MaskedBank["Masked Bank<br/>(K × 512)<br/>마스크 착용 얼굴"]
-    
-    Match["Best Match<br/>= max(sim(query, all_banks))"]
-    
-    Query --> BaseBank
-    Query --> DynamicBank
-    Query --> MaskedBank
-    
-    BaseBank --> Match
-    DynamicBank --> Match
-    MaskedBank --> Match
-    
-    style Query fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style BaseBank fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style DynamicBank fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style MaskedBank fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Match fill:#A78BFA,stroke:#8B5CF6,stroke-width:3px,color:#fff
-```
+<img width="1572" height="1061" alt="multi-bank" src="https://github.com/user-attachments/assets/4e25b700-a96f-44f4-aa62-f9e0b98334a1" />
 
-### 4.2 다층 오탐 방지 시스템
 
-```mermaid
-flowchart TD
-    Input["Input Detection"]
-    
-    L1["L1: sim_gap 체크<br/>1위-2위 유사도 차이 ≥5%"]
-    L2["L2: bbox 필터링<br/>동일 영역 다중 매칭 제거"]
-    L3["L3: 프레임 연속성<br/>최근 5프레임 내 동일 인물"]
-    L4["L4: 화질 적응형 임계값<br/>환경별 동적 조정"]
-    
-    Output["Final Match ✓"]
-    
-    Input --> L1
-    L1 -->|Pass| L2
-    L2 -->|Pass| L3
-    L3 -->|Pass| L4
-    L4 -->|Pass| Output
-    
-    L1 -->|Fail| Reject["Reject"]
-    L2 -->|Fail| Reject
-    L3 -->|Fail| Reject
-    L4 -->|Fail| Reject
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style L1 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L2 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L3 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L4 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Output fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style Reject fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
-```
+### 4.2 다층 오탐 방지 시스템/4.3 적응형 임계값 시스템
 
-### 4.3 적응형 임계값 시스템
-
-```mermaid
-flowchart TD
-    Base["기본 임계값<br/>0.45"]
-    
-    Quality["화질 조정<br/>±0.04"]
-    Mask["마스크 조정<br/>-0.02 ~ -0.05"]
-    
-    High["고화질<br/>+0.04"]
-    Medium["중화질<br/>±0"]
-    Low["저화질<br/>-0.03"]
-    
-    Final["최종 임계값<br/>0.28 ~ 0.50"]
-    
-    Base --> Quality
-    Base --> Mask
-    
-    Quality --> High
-    Quality --> Medium
-    Quality --> Low
-    
-    High --> Final
-    Medium --> Final
-    Low --> Final
-    Mask --> Final
-    
-    style Base fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style Quality fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Mask fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Final fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-```
+<img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/1dc0de4e-ba85-48cb-abd1-ce7a760d88e1" />
 
 ### 4.4 적응형 임계값 계산 로직
 
@@ -327,54 +170,10 @@ def calculate_threshold(quality, mask_prob):
 
 ### 5.1 인물 등록 플로우
 
-```mermaid
-flowchart LR
-    Input["이미지 입력"]
-    Detect["얼굴 감지<br/>RetinaFace"]
-    Extract["임베딩 추출<br/>buffalo_l"]
-    Create["Bank 생성<br/>bank_base.npy"]
-    Save["DB 저장<br/>PostgreSQL"]
-    
-    Input --> Detect
-    Detect --> Extract
-    Extract --> Create
-    Create --> Save
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Extract fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Create fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style Save fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-```
+<img width="2917" height="396" alt="enroll_flow" src="https://github.com/user-attachments/assets/0e7da950-3f1d-42ba-b7bb-fb9bb4839f9f" />
 
 ### 5.2 실시간 감지 플로우
-
-```mermaid
-flowchart TD
-    Input["프레임 입력"]
-    Skip{"프레임 스킵?"}
-    Detect["얼굴 감지<br/>RetinaFace"]
-    Process["임베딩 추출<br/>Bank 매칭<br/>임계값 계산"]
-    Filter["오탐 방지 필터링<br/>L1-L4"]
-    Classify["결과 분류"]
-    Send["클라이언트 전송"]
-    
-    Input --> Skip
-    Skip -->|No| Detect
-    Skip -->|Yes| Send
-    Detect --> Process
-    Process --> Filter
-    Filter --> Classify
-    Classify --> Send
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Skip fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Detect fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Process fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style Filter fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
-    style Classify fill:#818CF8,stroke:#6366F1,stroke-width:2px,color:#fff
-    style Send fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-```
+<img width="4149" height="547" alt="detection_flow" src="https://github.com/user-attachments/assets/00edded2-a313-482a-a7d8-80049a3bc112" />
 
 ---
 
@@ -423,33 +222,16 @@ flowchart TD
 
 ### 7.2 성능 지표
 
-```mermaid
-graph LR
-    subgraph Latency["Latency"]
-        WS["WebSocket<br/>50-150ms"]
-        HTTP["HTTP<br/>100-300ms"]
-    end
-    
-    subgraph Throughput["Throughput"]
-        GPU["GPU<br/>15+ FPS"]
-        CPU["CPU<br/>5-8 FPS"]
-    end
-    
-    subgraph Memory["Memory"]
-        Model["Model<br/>~500MB"]
-        Bank["Bank<br/>~10KB/person"]
-    end
-    
-    subgraph Accuracy["Accuracy"]
-        Precision["Precision<br/>>95%"]
-        FPR["FPR<br/><5%"]
-    end
-    
-    style Latency fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Throughput fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Memory fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Accuracy fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-```
+| 지표 | 항목 | 값 |
+|------|------|-----|
+| **지연시간 (Latency)** | WebSocket | 50-150ms |
+| | HTTP | 100-300ms |
+| **처리량 (Throughput)** | GPU | 15+ FPS |
+| | CPU | 5-8 FPS |
+| **메모리 (Memory)** | Model | ~500MB |
+| | Bank (per person) | ~10KB |
+| **정확도 (Accuracy)** | Precision | >95% |
+| | FPR (False Positive Rate) | <5% |
 
 ---
 
