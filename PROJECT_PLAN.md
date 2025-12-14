@@ -140,71 +140,9 @@ sequenceDiagram
 <img width="1572" height="1061" alt="multi-bank" src="https://github.com/user-attachments/assets/4e25b700-a96f-44f4-aa62-f9e0b98334a1" />
 
 
-### 4.2 다층 오탐 방지 시스템
+### 4.2 다층 오탐 방지 시스템/4.3 적응형 임계값 시스템
 
-```mermaid
-flowchart TD
-    Input["Input Detection"]
-    
-    L1["L1: sim_gap 체크<br/>1위-2위 유사도 차이 ≥5%"]
-    L2["L2: bbox 필터링<br/>동일 영역 다중 매칭 제거"]
-    L3["L3: 프레임 연속성<br/>최근 5프레임 내 동일 인물"]
-    L4["L4: 화질 적응형 임계값<br/>환경별 동적 조정"]
-    
-    Output["Final Match ✓"]
-    
-    Input --> L1
-    L1 -->|Pass| L2
-    L2 -->|Pass| L3
-    L3 -->|Pass| L4
-    L4 -->|Pass| Output
-    
-    L1 -->|Fail| Reject["Reject"]
-    L2 -->|Fail| Reject
-    L3 -->|Fail| Reject
-    L4 -->|Fail| Reject
-    
-    style Input fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style L1 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L2 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L3 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style L4 fill:#34D399,stroke:#10B981,stroke-width:2px,color:#fff
-    style Output fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style Reject fill:#F87171,stroke:#EF4444,stroke-width:2px,color:#fff
-```
-
-### 4.3 적응형 임계값 시스템
-
-```mermaid
-flowchart TD
-    Base["기본 임계값<br/>0.45"]
-    
-    Quality["화질 조정<br/>±0.04"]
-    Mask["마스크 조정<br/>-0.02 ~ -0.05"]
-    
-    High["고화질<br/>+0.04"]
-    Medium["중화질<br/>±0"]
-    Low["저화질<br/>-0.03"]
-    
-    Final["최종 임계값<br/>0.28 ~ 0.50"]
-    
-    Base --> Quality
-    Base --> Mask
-    
-    Quality --> High
-    Quality --> Medium
-    Quality --> Low
-    
-    High --> Final
-    Medium --> Final
-    Low --> Final
-    Mask --> Final
-    
-    style Base fill:#818CF8,stroke:#6366F1,stroke-width:3px,color:#fff
-    style Quality fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Mask fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-    style Final fill:#34D399,stroke:#10B981,stroke-width:3px,color:#fff
-```
+<img width="2901" height="1604" alt="Untitled" src="https://github.com/user-attachments/assets/1dc0de4e-ba85-48cb-abd1-ce7a760d88e1" />
 
 ### 4.4 적응형 임계값 계산 로직
 
