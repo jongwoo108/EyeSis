@@ -130,6 +130,7 @@ flowchart TD
     style Output fill:#4F46E5,stroke:#312E81,stroke-width:3px,color:#fff
     style Reject fill:#EF4444,stroke:#DC2626,stroke-width:2px,color:#fff
 ```
+![Uploading Untitled.png…]()
 
 ### 4. 적응형 임계값 시스템
 
