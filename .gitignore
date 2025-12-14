@@ -31,6 +31,13 @@ env.bak/
 venv.bak/
 .venv
 
+# Input data (large files)
+images/
+videos/
+
+# Documentation
+docs/
+
 # IDE
 .vscode/
 .idea/
@@ -110,3 +117,6 @@ dmypy.json
 
 # ngrok
 ngrok.yml
+
+# Service Vision
+SERVICE_VISION.md
