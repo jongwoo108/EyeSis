@@ -1,0 +1,22 @@
+{
+  "image_path": "images\\test\\test_img-00013.jpg",
+  "image_name": "test_img-00013.jpg",
+  "faces": [
+    {
+      "bbox": [
+        2329,
+        654,
+        2503,
+        931
+      ],
+      "status": "unknown",
+      "name": "Unknown",
+      "person_id": null,
+      "confidence": 14,
+      "color": "yellow",
+      "angle_type": "right_profile",
+      "yaw_angle": 315.54384502234575,
+      "bank_type": null
+    }
+  ]
+}

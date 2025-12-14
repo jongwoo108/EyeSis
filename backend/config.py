@@ -1,6 +1,6 @@
 # backend/config.py
 """
-FaceWatch 백엔드 설정
+EyeSis 백엔드 설정
 """
 import os
 from pathlib import Path
@@ -21,7 +21,7 @@ WEB_DIR = PROJECT_ROOT / "web"
 # ==========================================
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/facewatch"
+    "postgresql://postgres:postgres@localhost:5432/eyesis"
 )
 
 # ==========================================
@@ -66,6 +66,8 @@ TEMPORAL_FILTER_MIN_MATCHES = 3  # 최소 매칭 프레임 수
 # ==========================================
 DEFAULT_LOG_LIMIT = 100  # 기본 로그 조회 수
 JPEG_QUALITY = 85  # 스냅샷 JPEG 품질
+
+
 
 
 

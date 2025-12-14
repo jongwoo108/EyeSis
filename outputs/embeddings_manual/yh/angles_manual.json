@@ -1,0 +1,20 @@
+{
+  "angle_types": [
+    "right"
+  ],
+  "yaw_angles": [
+    237.28094433490492
+  ],
+  "pitch_angles": [
+    -2.49868294540033
+  ],
+  "file_mapping": [
+    {
+      "file": "yh_right.jpeg",
+      "angle_type": "right",
+      "detected_angle_type": "right_profile",
+      "yaw": 237.28094433490492,
+      "pitch": -2.49868294540033
+    }
+  ]
+}

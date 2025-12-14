@@ -1935,7 +1935,7 @@ if (editCategorySelect && editCustomContainer && editCustomInput) {
 
 
 
-console.log("✅ FaceWatch 프론트엔드 초기화 완료");
+console.log("✅ EyeSis 프론트엔드 초기화 완료");
 
 // ==========================================
 // 긴급 상황 전파 리포트 로직

@@ -1,4 +1,4 @@
-# FaceWatch 프로젝트 기획서
+# EyeSis 프로젝트 기획서
 
 <div align="center">
 
@@ -40,7 +40,7 @@
 
 ```mermaid
 mindmap
-  root((FaceWatch<br/>Value Proposition))
+  root((EyeSis<br/>Value Proposition))
     Accuracy
       >95% 정확도
       Multi-Bank 시스템
@@ -490,7 +490,7 @@ gantt
 
 ## 9. 결론
 
-FaceWatch는 **정확도, 실시간성, 확장성**을 균형있게 달성한 얼굴 인식 시스템입니다.
+EyeSis는 **정확도, 실시간성, 확장성**을 균형있게 달성한 얼굴 인식 시스템입니다.
 
 ### 핵심 성과
 

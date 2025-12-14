@@ -1,0 +1,22 @@
+{
+  "image_path": "images\\test_easy\\test_img-00089.jpg",
+  "image_name": "test_img-00089.jpg",
+  "faces": [
+    {
+      "bbox": [
+        1487,
+        806,
+        1674,
+        1008
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 58,
+      "color": "red",
+      "angle_type": "front",
+      "yaw_angle": 10.21383109550354,
+      "bank_type": "base"
+    }
+  ]
+}

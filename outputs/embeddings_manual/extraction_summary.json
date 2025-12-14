@@ -1,0 +1,150 @@
+{
+  "danielle": {
+    "person_id": "danielle",
+    "embeddings": {
+      "front": {
+        "file": "outputs\\embeddings_manual\\danielle\\embedding_front.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "danielle.jpg",
+            "detected_angle_type": "left",
+            "yaw_angle": -22.66476160524001,
+            "pitch_angle": -5.334324605729068,
+            "file_angle_type": "front"
+          }
+        ]
+      }
+    }
+  },
+  "hani": {
+    "person_id": "hani",
+    "embeddings": {}
+  },
+  "harin": {
+    "person_id": "harin",
+    "embeddings": {}
+  },
+  "hong": {
+    "person_id": "hong",
+    "embeddings": {}
+  },
+  "hyein": {
+    "person_id": "hyein",
+    "embeddings": {}
+  },
+  "ja": {
+    "person_id": "ja",
+    "embeddings": {
+      "left": {
+        "file": "outputs\\embeddings_manual\\ja\\embedding_left.npy",
+        "count": 1,
+        "centroid_norm": 1.0000001192092896,
+        "angles": [
+          {
+            "file": "ja_left.jpeg",
+            "detected_angle_type": "left_profile",
+            "yaw_angle": -146.54017174766193,
+            "pitch_angle": -8.242327896046444,
+            "file_angle_type": "left"
+          }
+        ]
+      },
+      "right": {
+        "file": "outputs\\embeddings_manual\\ja\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "ja_right.jpeg",
+            "detected_angle_type": "right_profile",
+            "yaw_angle": 232.8290449762655,
+            "pitch_angle": -10.796660667043867,
+            "file_angle_type": "right"
+          }
+        ]
+      }
+    }
+  },
+  "js": {
+    "person_id": "js",
+    "embeddings": {
+      "left": {
+        "file": "outputs\\embeddings_manual\\js\\embedding_left.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "js_left.jpeg",
+            "detected_angle_type": "left_profile",
+            "yaw_angle": -188.79434680210733,
+            "pitch_angle": -3.610573527298202,
+            "file_angle_type": "left"
+          }
+        ]
+      }
+    }
+  },
+  "jw": {
+    "person_id": "jw",
+    "embeddings": {
+      "right": {
+        "file": "outputs\\embeddings_manual\\jw\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "jw_right.jpeg",
+            "detected_angle_type": "right_profile",
+            "yaw_angle": 162.73609537530484,
+            "pitch_angle": 0.2688143164084611,
+            "file_angle_type": "right"
+          }
+        ]
+      }
+    }
+  },
+  "minji": {
+    "person_id": "minji",
+    "embeddings": {}
+  },
+  "yh": {
+    "person_id": "yh",
+    "embeddings": {
+      "right": {
+        "file": "outputs\\embeddings_manual\\yh\\embedding_right.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "yh_right.jpeg",
+            "detected_angle_type": "right_profile",
+            "yaw_angle": 237.28094433490492,
+            "pitch_angle": -2.49868294540033,
+            "file_angle_type": "right"
+          }
+        ]
+      }
+    }
+  },
+  "yujin": {
+    "person_id": "yujin",
+    "embeddings": {
+      "front": {
+        "file": "outputs\\embeddings_manual\\yujin\\embedding_front.npy",
+        "count": 1,
+        "centroid_norm": 1.0,
+        "angles": [
+          {
+            "file": "yujin.jpg",
+            "detected_angle_type": "front",
+            "yaw_angle": -3.1476469850208924,
+            "pitch_angle": -10.029751100024061,
+            "file_angle_type": "front"
+          }
+        ]
+      }
+    }
+  }
+}

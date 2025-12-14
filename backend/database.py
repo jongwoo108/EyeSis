@@ -22,7 +22,7 @@ else:
 # 데이터베이스 연결 설정
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/facewatch"
+    "postgresql://postgres:postgres@localhost:5432/eyesis"
 )
 
 # PostgreSQL 연결 시 인코딩 명시
@@ -39,7 +39,7 @@ def create_database_engine():
             password = parsed.password or 'postgres'
             hostname = parsed.hostname or 'localhost'
             port = parsed.port or 5432
-            database = parsed.path.lstrip('/') if parsed.path else 'facewatch'
+            database = parsed.path.lstrip('/') if parsed.path else 'eyesis'
             
             # 커스텀 연결 함수
             def create_connection():

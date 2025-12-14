@@ -1,4 +1,4 @@
-# FaceWatch Backend
+# EyeSis Backend
 
 FastAPI 기반 백엔드 서버 (PostgreSQL 사용)
 
@@ -14,7 +14,7 @@ FastAPI 기반 백엔드 서버 (PostgreSQL 사용)
 psql -U postgres
 
 # 데이터베이스 생성
-CREATE DATABASE facewatch;
+CREATE DATABASE eyesis;
 \q
 ```
 
@@ -23,7 +23,7 @@ CREATE DATABASE facewatch;
 `backend/.env` 파일을 생성하고 다음 내용을 추가:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/facewatch
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/eyesis
 HOST=0.0.0.0
 PORT=5000
 INSIGHTFACE_MODEL=buffalo_l

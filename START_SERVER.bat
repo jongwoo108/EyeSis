@@ -1,6 +1,6 @@
 @echo off
-echo Starting FaceWatch Server...
-cd /d C:\FaceWatch
+echo Starting EyeSis Server...
+cd /d C:\EyeSis
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 5000
 pause
 

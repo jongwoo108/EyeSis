@@ -1,0 +1,22 @@
+{
+  "image_path": "images\\test_easy\\test_img-00063.jpg",
+  "image_name": "test_img-00063.jpg",
+  "faces": [
+    {
+      "bbox": [
+        1478,
+        706,
+        1718,
+        1033
+      ],
+      "status": "normal",
+      "name": "js",
+      "person_id": "js",
+      "confidence": 73,
+      "color": "green",
+      "angle_type": "front",
+      "yaw_angle": 8.626084224573548,
+      "bank_type": "base"
+    }
+  ]
+}

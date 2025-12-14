@@ -1,5 +1,5 @@
 """
-FaceWatch FastAPI 백엔드 서버
+EyeSis FastAPI 백엔드 서버
 웹 프론트엔드와 연동하여 실시간 얼굴 인식 서비스 제공
 PostgreSQL 데이터베이스 사용
 """
@@ -32,7 +32,7 @@ from backend.database import get_db, init_db as db_init
 # FastAPI 앱 초기화
 # ==========================================
 
-app = FastAPI(title="FaceWatch API", version="1.0.0")
+app = FastAPI(title="EyeSis API", version="1.0.0")
 
 # CORS 허용 (프론트엔드 접근 허용)
 app.add_middleware(
@@ -80,7 +80,7 @@ persons_api.set_model(model)
 async def startup_event():
     """서버 시작 시 데이터베이스 초기화 및 데이터 로드"""
     print("=" * 70)
-    print("🚀 FaceWatch 서버 시작")
+    print("🚀 EyeSis 서버 시작")
     print("=" * 70)
     print("📡 WebSocket 엔드포인트:")
     print("   - /ws/detect (메인 감지 엔드포인트)")

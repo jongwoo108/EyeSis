@@ -1,4 +1,4 @@
-# FaceWatch 서비스 개선 이력
+# EyeSis 서비스 개선 이력
 
 <div align="center">
 
@@ -24,7 +24,7 @@
 
 ## 개요
 
-FaceWatch는 초기 서버사이드 렌더링 방식에서 시작하여 여러 단계의 최적화를 거쳐 현재의 **WebSocket 기반 실시간 감지 시스템**으로 발전했습니다.
+EyeSis는 초기 서버사이드 렌더링 방식에서 시작하여 여러 단계의 최적화를 거쳐 현재의 **WebSocket 기반 실시간 감지 시스템**으로 발전했습니다.
 
 ### 핵심 개선 지표
 
@@ -41,7 +41,7 @@ FaceWatch는 초기 서버사이드 렌더링 방식에서 시작하여 여러 �
 
 ```mermaid
 timeline
-    title FaceWatch Evolution Timeline
+    title EyeSis Evolution Timeline
     section Phase 1
         서버사이드 렌더링 : HTTP POST : 이미지 전송
     section Phase 2
@@ -361,6 +361,6 @@ graph TB
 
 **Last Updated: 2024.12**
 
-*FaceWatch - Real-time Face Recognition System*
+*EyeSis - Real-time Face Recognition System*
 
 </div>

@@ -1,0 +1,43 @@
+{
+  "image_path": "images\\test_easy\\test_img-00078.jpg",
+  "image_name": "test_img-00078.jpg",
+  "banks_used": [
+    "base",
+    "masked",
+    "dynamic"
+  ],
+  "faces": [
+    {
+      "bbox": [
+        1413,
+        543,
+        1611,
+        796
+      ],
+      "status": "criminal",
+      "name": "yh",
+      "person_id": "yh",
+      "confidence": 85,
+      "color": "red",
+      "angle_type": "left_profile",
+      "yaw_angle": -48.03262308210664,
+      "bank_type": "base"
+    },
+    {
+      "bbox": [
+        2664,
+        934,
+        2907,
+        1291
+      ],
+      "status": "normal",
+      "name": "js",
+      "person_id": "js",
+      "confidence": 52,
+      "color": "green",
+      "angle_type": "top",
+      "yaw_angle": -205.00015401530214,
+      "bank_type": "base"
+    }
+  ]
+}

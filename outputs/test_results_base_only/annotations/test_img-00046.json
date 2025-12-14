@@ -1,0 +1,38 @@
+{
+  "image_path": "images\\test\\test_img-00046.jpg",
+  "image_name": "test_img-00046.jpg",
+  "faces": [
+    {
+      "bbox": [
+        1714,
+        1145,
+        1848,
+        1382
+      ],
+      "status": "normal",
+      "name": "js",
+      "person_id": "js",
+      "confidence": 51,
+      "color": "green",
+      "angle_type": "left_profile",
+      "yaw_angle": -109.66375363355704,
+      "bank_type": "base"
+    },
+    {
+      "bbox": [
+        1383,
+        926,
+        1496,
+        1102
+      ],
+      "status": "normal",
+      "name": "jw",
+      "person_id": "jw",
+      "confidence": 55,
+      "color": "green",
+      "angle_type": "front",
+      "yaw_angle": 6.17306262214947,
+      "bank_type": "base"
+    }
+  ]
+}
