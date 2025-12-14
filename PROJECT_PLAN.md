@@ -67,22 +67,8 @@ mindmap
 
 ### 2.1 전체 시스템 구조
 
-```mermaid
-graph LR
-    Frontend["F/E<br/>(ES Modules)"]
-    Backend["B/E<br/>(FastAPI)"]
-    Database["DB<br/>(PostgreSQL)"]
-    InsightFace["InsightFace<br/>(buffalo_l)"]
-    
-    Frontend -->|WebSocket/HTTP| Backend
-    Backend -->|SQL| Database
-    Backend -->|Model| InsightFace
-    
-    style Frontend fill:#10B981,stroke:#059669,stroke-width:2px,color:#fff
-    style Backend fill:#60A5FA,stroke:#3B82F6,stroke-width:2px,color:#fff
-    style Database fill:#A78BFA,stroke:#8B5CF6,stroke-width:2px,color:#fff
-    style InsightFace fill:#FB923C,stroke:#F97316,stroke-width:2px,color:#fff
-```
+<img width="2148" height="885" alt="system architecture" src="https://github.com/user-attachments/assets/b922c33b-8fb8-4b13-bd2c-1a5723da6947" />
+
 
 ### 2.2 프론트엔드 모듈 아키텍처
 <img width="1524" height="1172" alt="FE_modules" src="https://github.com/user-attachments/assets/9583e763-61ea-4e75-8c5d-a56bdfe9a1c3" />
